@@ -11610,10 +11610,151 @@ def cmd_reach(args):
         # Silent on success — suitable for cron
         return
 
+    if action == "setup":
+        from agent.reach_installer import get_installer, ZERO_CONFIG_CHANNELS, OPTIONAL_CHANNELS
+
+        safe = getattr(args, "safe", False)
+        dry_run = getattr(args, "dry_run", False)
+        install_all = getattr(args, "all", False)
+        channels = getattr(args, "channels", None) or []
+
+        # Validate channel names
+        all_valid = list(ZERO_CONFIG_CHANNELS.keys()) + list(OPTIONAL_CHANNELS.keys())
+        invalid = [ch for ch in channels if ch not in all_valid]
+        if invalid:
+            print(f"Unknown channel(s): {', '.join(invalid)}", file=sys.stderr)
+            print(f"Valid channels: {', '.join(all_valid)}", file=sys.stderr)
+            sys.exit(1)
+
+        installer = get_installer(safe=safe, dry_run=dry_run)
+
+        if install_all:
+            steps = installer.plan(install_all=True)
+        elif channels:
+            steps = installer.plan(channels=channels)
+        else:
+            # Default: zero-config channels
+            print("")
+            print("  Installing zero-config channels (web, youtube, github, rss, v2ex, bilibili)")
+            print("  Optional channels: twitter, reddit, xiaohongshu, linkedin, xueqiu, xiaoyuzhou, exa")
+            print(f"  Use 'hermes reach setup <channel>...' or '--all' for more.")
+            print("")
+            steps = installer.plan(channels=None)
+
+        if not steps:
+            print("  All requested tools are already installed — nothing to do.")
+            return
+
+        print(f"  Install plan: {len(steps)} step(s)")
+        if dry_run:
+            print("  [DRY RUN MODE — no changes will be made]")
+        if safe:
+            print("  [SAFE MODE — no sudo/system changes]")
+        print("")
+
+        results = installer.execute(steps)
+        print(installer.format_results(results))
+
+        # Suggest running doctor after install
+        successful = sum(1 for r in results if r.executed and r.success)
+        if successful > 0 and not dry_run:
+            print("  Run 'hermes reach doctor' to verify capabilities are now available.")
+        return
+
+    if action == "configure":
+        from agent.reach_installer import get_configurator
+
+        configurator = get_configurator()
+
+        # Handle special flags
+        if getattr(args, "list", False):
+            cfg = configurator.list_config()
+            print("")
+            print("  Internet Reach — Configuration")
+            print("  " + "=" * 48)
+            if not cfg:
+                print("  (empty — no credentials configured)")
+            else:
+                for key, val in cfg.items():
+                    print(f"  {key}: {val}")
+            print("")
+            return
+
+        if getattr(args, "clear_all", False):
+            result = configurator.clear_all()
+            print(f"  Cleared all credentials: {result}")
+            return
+
+        if getattr(args, "remove", False):
+            key = getattr(args, "key", None)
+            result = configurator.remove_config(key)
+            print(f"  {result}")
+            return
+
+        key = getattr(args, "key", None)
+        value = getattr(args, "value", None)
+
+        if key == "from-browser":
+            browser = value or "chrome"
+            result = configurator.configure_from_browser(browser)
+            print("")
+            print(f"  Browser cookie extraction ({browser}):")
+            if "error" in result:
+                print(f"  ❌ {result['error']}")
+                if "fix" in result:
+                    print(f"     fix: {result['fix']}")
+            else:
+                for platform, status in result.get("platforms", {}).items():
+                    print(f"  {platform}: {status}")
+            print("")
+            return
+
+        if key in ("twitter-cookies", "twitter_cookies"):
+            result = configurator.configure_cookies("twitter", value or "")
+            print(f"  Twitter cookies: {result}")
+            return
+
+        if key in ("reddit-cookies", "reddit_cookies"):
+            result = configurator.configure_cookies("reddit", value or "")
+            print(f"  Reddit cookies: {result}")
+            return
+
+        if key in ("xhs-cookies", "xhs_cookies", "xiaohongshu-cookies"):
+            result = configurator.configure_cookies("xiaohongshu", value or "")
+            print(f"  XiaoHongShu cookies: {result}")
+            return
+
+        if key in ("xueqiu-cookies", "xueqiu_cookies"):
+            result = configurator.configure_cookies("xueqiu", value or "")
+            print(f"  Xueqiu cookies: {result}")
+            return
+
+        if key == "proxy":
+            result = configurator.configure_proxy(value or "")
+            print(f"  Proxy: {result}")
+            return
+
+        if key in ("groq-key", "groq_key"):
+            result = configurator.configure_groq_key(value or "")
+            print(f"  Groq key: {result}")
+            return
+
+        if key in ("exa-key", "exa_key"):
+            result = configurator.configure_exa_key(value or "")
+            print(f"  Exa key: {result}")
+            return
+
+        print(f"  Unknown configuration key: {key}", file=sys.stderr)
+        print(f"  Supported: twitter-cookies, reddit-cookies, xhs-cookies, "
+              f"xueqiu-cookies, proxy, groq-key, exa-key, from-browser",
+              file=sys.stderr)
+        sys.exit(1)
+
     # Default: doctor
     cap_name = getattr(args, "capability", None)
     json_out = getattr(args, "json", False)
-    results = registry.doctor(cap_name)
+    functional = getattr(args, "functional", False)
+    results = registry.doctor(cap_name, functional=functional)
     if not results and cap_name:
         print(f"Unknown capability: {cap_name}", file=sys.stderr)
         sys.exit(1)

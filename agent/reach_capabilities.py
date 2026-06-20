@@ -73,7 +73,10 @@ class Backend:
         name: short identifier (e.g. ``"x_search_tool"``, ``"xurl_cli"``,
             ``"twitter_cli"``).
         description: what this backend does.
-        probe: callable returning a ``ProbeResult``.
+        probe: callable returning a ``ProbeResult`` (fast, no network).
+        functional_probe: optional callable that actually tests the backend
+            with a real query (slower, makes network calls). Used by
+            ``hermes reach doctor --functional``.
         tool_name: optional Hermes tool name if this backend is a built-in tool.
         cli_command: optional CLI command name if this backend is a shell tool.
         priority: lower = tried first (default 10, 20, 30…).
@@ -82,6 +85,7 @@ class Backend:
     name: str
     description: str
     probe: Callable[[], ProbeResult]
+    functional_probe: Optional[Callable[[], ProbeResult]] = None
     tool_name: Optional[str] = None
     cli_command: Optional[str] = None
     priority: int = 10
@@ -94,6 +98,22 @@ class Backend:
                 available=False,
                 status="unknown",
                 detail=f"probe error: {exc}",
+                backend_name=self.name,
+            )
+        result.backend_name = self.name
+        return result
+
+    def run_functional_probe(self) -> ProbeResult:
+        """Run the functional probe if available, else fall back to static probe."""
+        if self.functional_probe is None:
+            return self.run_probe()
+        try:
+            result = self.functional_probe()
+        except Exception as exc:
+            result = ProbeResult(
+                available=False,
+                status="unknown",
+                detail=f"functional probe error: {exc}",
                 backend_name=self.name,
             )
         result.backend_name = self.name
@@ -125,6 +145,13 @@ class Capability:
         """Probe every backend in priority order."""
         return [
             b.run_probe() for b in sorted(self.backends, key=lambda b: b.priority)
+        ]
+
+    def probe_all_functional(self) -> List[ProbeResult]:
+        """Functionally probe every backend (makes real network calls)."""
+        return [
+            b.run_functional_probe()
+            for b in sorted(self.backends, key=lambda b: b.priority)
         ]
 
 
@@ -505,6 +532,222 @@ def _probe_xiaoyuzhou() -> ProbeResult:
 
 
 # ---------------------------------------------------------------------------
+# Functional probes — actually test the backend with a real query.
+# These make network calls and are slower; only used with --functional.
+# ---------------------------------------------------------------------------
+
+
+def _func_probe_web_jina() -> ProbeResult:
+    """Actually fetch a test page via Jina Reader."""
+    import subprocess
+
+    try:
+        r = subprocess.run(
+            ["curl", "-sL", "--max-time", "10", "https://r.jina.ai/https://example.com"],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        if r.returncode == 0 and r.stdout and "Example Domain" in r.stdout:
+            return ProbeResult(True, "ok", "Jina Reader: successfully fetched test page")
+        return ProbeResult(False, "misconfigured", f"Jina Reader: unexpected response (len={len(r.stdout or '')})")
+    except Exception as exc:
+        return ProbeResult(False, "misconfigured", f"Jina Reader: {exc}")
+
+
+def _func_probe_web_hermes() -> ProbeResult:
+    """Actually call web_extract on a test URL."""
+    try:
+        from tools.registry import registry as tool_reg
+
+        entry = tool_reg.get_entry("web_extract")
+        if entry is None:
+            return ProbeResult(False, "missing", "web_extract tool not registered")
+        result = entry.handler({"urls": ["https://example.com"]}, task_id="reach_func_test")
+        data = json.loads(result) if isinstance(result, str) else result
+        if data.get("success") or data.get("results"):
+            return ProbeResult(True, "ok", "web_extract: successfully fetched test page")
+        return ProbeResult(False, "misconfigured", f"web_extract: {data.get('error', 'no results')}")
+    except Exception as exc:
+        return ProbeResult(False, "misconfigured", f"web_extract: {exc}")
+
+
+def _func_probe_gh_cli() -> ProbeResult:
+    """Actually run a GitHub API call via gh."""
+    import subprocess
+
+    try:
+        r = subprocess.run(
+            ["gh", "api", "repos/octocat/Hello-World", "--jq", ".full_name"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if r.returncode == 0 and r.stdout.strip():
+            return ProbeResult(True, "ok", f"gh CLI: API call succeeded ({r.stdout.strip()})")
+        return ProbeResult(False, "misconfigured", f"gh CLI: {r.stderr.strip()[:200]}")
+    except Exception as exc:
+        return ProbeResult(False, "misconfigured", f"gh CLI: {exc}")
+
+
+def _func_probe_github_api() -> ProbeResult:
+    """Actually call the GitHub REST API."""
+    import subprocess
+
+    try:
+        r = subprocess.run(
+            ["curl", "-sL", "--max-time", "10", "https://api.github.com/repos/octocat/Hello-World"],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        if r.returncode == 0 and '"full_name"' in r.stdout:
+            return ProbeResult(True, "ok", "GitHub REST API: call succeeded")
+        return ProbeResult(False, "misconfigured", "GitHub REST API: no valid response")
+    except Exception as exc:
+        return ProbeResult(False, "misconfigured", f"GitHub API: {exc}")
+
+
+def _func_probe_yt_dlp() -> ProbeResult:
+    """Actually extract metadata from a known YouTube video."""
+    import subprocess
+
+    try:
+        r = subprocess.run(
+            ["yt-dlp", "--dump-json", "--no-download", "--max-filesize", "0",
+             "https://www.youtube.com/watch?v=dQw4w9WgXcQ"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if r.returncode == 0 and r.stdout:
+            data = json.loads(r.stdout)
+            return ProbeResult(True, "ok", f"yt-dlp: extracted metadata for '{data.get('title', '?')[:50]}'")
+        return ProbeResult(False, "misconfigured", f"yt-dlp: {r.stderr.strip()[:200]}")
+    except Exception as exc:
+        return ProbeResult(False, "misconfigured", f"yt-dlp: {exc}")
+
+
+def _func_probe_yt_transcript_skill() -> ProbeResult:
+    """Actually try to get a transcript via the skill."""
+    # Skills are not directly callable from here; check if the skill exists
+    # and report that a functional test requires the agent to invoke it.
+    static_result = _probe_yt_transcript_skill()
+    if static_result.available:
+        return ProbeResult(
+            True,
+            "ok",
+            "YouTube transcript skill installed (functional test requires agent invocation)",
+        )
+    return static_result
+
+
+def _func_probe_rss_feedparser() -> ProbeResult:
+    """Actually parse a known RSS feed."""
+    try:
+        import feedparser
+
+        feed = feedparser.parse("https://hnrss.org/frontpage")
+        if feed.entries:
+            return ProbeResult(
+                True, "ok", f"feedparser: parsed {len(feed.entries)} entries from HN RSS"
+            )
+        return ProbeResult(False, "misconfigured", "feedparser: no entries in test feed")
+    except Exception as exc:
+        return ProbeResult(False, "misconfigured", f"feedparser: {exc}")
+
+
+def _func_probe_v2ex_api() -> ProbeResult:
+    """Actually call the V2EX API."""
+    import subprocess
+
+    try:
+        r = subprocess.run(
+            ["curl", "-sL", "--max-time", "10", "https://www.v2ex.com/api/topics/hot.json"],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        if r.returncode == 0 and r.stdout.startswith("["):
+            topics = json.loads(r.stdout)
+            return ProbeResult(True, "ok", f"V2EX API: got {len(topics)} hot topics")
+        return ProbeResult(False, "misconfigured", "V2EX API: no valid JSON response")
+    except Exception as exc:
+        return ProbeResult(False, "misconfigured", f"V2EX: {exc}")
+
+
+def _func_probe_x_search_tool() -> ProbeResult:
+    """Actually try an x_search query."""
+    try:
+        from tools.registry import registry as tool_reg
+
+        entry = tool_reg.get_entry("x_search")
+        if entry is None:
+            return ProbeResult(False, "missing", "x_search tool not registered")
+        result = entry.handler({"query": "test", "max_results": 1}, task_id="reach_func_test")
+        data = json.loads(result) if isinstance(result, str) else result
+        if "answer" in data or "results" in data:
+            return ProbeResult(True, "ok", "x_search: query succeeded")
+        return ProbeResult(False, "misconfigured", f"x_search: {str(data)[:200]}")
+    except Exception as exc:
+        return ProbeResult(False, "misconfigured", f"x_search: {exc}")
+
+
+def _func_probe_linkedin_jina() -> ProbeResult:
+    """Actually try reading a public LinkedIn page via Jina."""
+    import subprocess
+
+    try:
+        r = subprocess.run(
+            ["curl", "-sL", "--max-time", "10", "https://r.jina.ai/https://www.linkedin.com/company/google/"],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        if r.returncode == 0 and r.stdout and len(r.stdout) > 100:
+            return ProbeResult(True, "ok", "LinkedIn via Jina: page fetched")
+        return ProbeResult(False, "misconfigured", "LinkedIn via Jina: insufficient content")
+    except Exception as exc:
+        return ProbeResult(False, "misconfigured", f"LinkedIn Jina: {exc}")
+
+
+def _func_probe_reddit_jina() -> ProbeResult:
+    """Actually try reading a Reddit page via Jina."""
+    import subprocess
+
+    try:
+        r = subprocess.run(
+            ["curl", "-sL", "--max-time", "10", "https://r.jina.ai/https://old.reddit.com/r/programming/hot.json"],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        if r.returncode == 0 and r.stdout and ("children" in r.stdout or "data" in r.stdout):
+            return ProbeResult(True, "ok", "Reddit via Jina: content fetched")
+        return ProbeResult(False, "misconfigured", "Reddit via Jina: no valid content")
+    except Exception as exc:
+        return ProbeResult(False, "misconfigured", f"Reddit Jina: {exc}")
+
+
+def _func_probe_bili_cli() -> ProbeResult:
+    """Actually try a Bilibili search."""
+    import subprocess
+
+    try:
+        r = subprocess.run(
+            ["bili", "search", "test", "--type", "video", "--limit", "1"],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        if r.returncode == 0 and r.stdout:
+            return ProbeResult(True, "ok", "bili-cli: search returned results")
+        return ProbeResult(False, "misconfigured", f"bili-cli: {r.stderr.strip()[:200]}")
+    except Exception as exc:
+        return ProbeResult(False, "misconfigured", f"bili-cli: {exc}")
+
+
+# ---------------------------------------------------------------------------
 # Registry
 # ---------------------------------------------------------------------------
 
@@ -532,11 +775,18 @@ class ReachRegistry:
             return None
         return cap.best_backend()
 
-    def doctor(self, capability_name: Optional[str] = None) -> List[Dict]:
+    def doctor(
+        self,
+        capability_name: Optional[str] = None,
+        functional: bool = False,
+    ) -> List[Dict]:
         """Run probes and return structured results.
 
         If *capability_name* is given, probe only that capability.
         Otherwise probe all.
+
+        If *functional* is True, run functional probes (real network calls)
+        instead of static availability checks.
         """
         caps: List[Capability]
         if capability_name:
@@ -554,9 +804,13 @@ class ReachRegistry:
                 "description": cap.description,
                 "backends": [],
                 "best": None,
+                "functional": functional,
             }
             best_found = False
-            for result in cap.probe_all():
+            probe_results = (
+                cap.probe_all_functional() if functional else cap.probe_all()
+            )
+            for result in probe_results:
                 cap_entry["backends"].append(
                     {
                         "name": result.backend_name,
@@ -586,6 +840,7 @@ class ReachRegistry:
                         "hermes_web_extract",
                         "Hermes web_extract tool",
                         _probe_web_hermes,
+                        functional_probe=_func_probe_web_hermes,
                         tool_name="web_extract",
                         priority=10,
                     ),
@@ -593,6 +848,7 @@ class ReachRegistry:
                         "jina_reader",
                         "Jina Reader (r.jina.ai) — free, no key",
                         _probe_web_jina,
+                        functional_probe=_func_probe_web_jina,
                         cli_command="curl",
                         priority=20,
                     ),
@@ -640,6 +896,7 @@ class ReachRegistry:
                         "x_search_tool",
                         "xAI x_search Responses API tool",
                         _probe_x_search_tool,
+                        functional_probe=_func_probe_x_search_tool,
                         tool_name="x_search",
                         priority=10,
                     ),
@@ -699,12 +956,14 @@ class ReachRegistry:
                         "transcript_skill",
                         "Hermes YouTube transcript skill",
                         _probe_yt_transcript_skill,
+                        functional_probe=_func_probe_yt_transcript_skill,
                         priority=10,
                     ),
                     Backend(
                         "yt_dlp",
                         "yt-dlp (subtitles + metadata)",
                         _probe_yt_dlp,
+                        functional_probe=_func_probe_yt_dlp,
                         cli_command="yt-dlp",
                         priority=20,
                     ),
@@ -780,6 +1039,7 @@ class ReachRegistry:
                         "jina_reader",
                         "Jina Reader (old.reddit.com public)",
                         _probe_web_jina,
+                        functional_probe=_func_probe_reddit_jina,
                         priority=30,
                     ),
                 ],
@@ -796,6 +1056,7 @@ class ReachRegistry:
                         "gh_cli",
                         "gh CLI (authenticated)",
                         _probe_gh_cli,
+                        functional_probe=_func_probe_gh_cli,
                         cli_command="gh",
                         priority=10,
                     ),
@@ -803,6 +1064,7 @@ class ReachRegistry:
                         "github_api",
                         "GitHub REST API (token or unauthenticated)",
                         _probe_github_api,
+                        functional_probe=_func_probe_github_api,
                         priority=20,
                     ),
                     Backend(
@@ -825,6 +1087,7 @@ class ReachRegistry:
                         "feedparser",
                         "feedparser (Python)",
                         _probe_rss_feedparser,
+                        functional_probe=_func_probe_rss_feedparser,
                         priority=10,
                     ),
                     Backend(
@@ -854,6 +1117,7 @@ class ReachRegistry:
                         "bili_cli",
                         "bili-cli (no login needed)",
                         _probe_bili_cli,
+                        functional_probe=_func_probe_bili_cli,
                         cli_command="bili",
                         priority=10,
                     ),
@@ -894,6 +1158,7 @@ class ReachRegistry:
                         "jina_reader",
                         "Jina Reader (public LinkedIn pages)",
                         _probe_linkedin_jina,
+                        functional_probe=_func_probe_linkedin_jina,
                         priority=10,
                     ),
                     Backend(
@@ -916,6 +1181,7 @@ class ReachRegistry:
                         "v2ex_api",
                         "V2EX public JSON API (no auth)",
                         _probe_v2ex_api,
+                        functional_probe=_func_probe_v2ex_api,
                         cli_command="curl",
                         priority=10,
                     ),

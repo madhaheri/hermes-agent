@@ -3,9 +3,12 @@
 Provides the ``hermes reach`` command group:
   * ``hermes reach doctor``  — probe all internet-reach capabilities
   * ``hermes reach doctor <cap>`` — probe a single capability
+  * ``hermes reach doctor --functional`` — actually test with real queries
   * ``hermes reach list``    — list all capabilities and their backends
   * ``hermes reach resolve <cap>`` — show which backend would be used
   * ``hermes reach watch``   — quick health check (for cron jobs)
+  * ``hermes reach setup``   — install upstream tools for reach capabilities
+  * ``hermes reach configure`` — manage credentials (cookies, proxy, keys)
 
 Handler is injected from main.py to avoid import cycles.
 """
@@ -48,6 +51,11 @@ def build_reach_parser(subparsers, *, cmd_reach: Callable) -> None:
         action="store_true",
         help="Output raw JSON instead of formatted text",
     )
+    doctor_p.add_argument(
+        "--functional",
+        action="store_true",
+        help="Run functional probes (actually test with real queries — slower, makes network calls)",
+    )
     doctor_p.set_defaults(func=cmd_reach)
 
     # list
@@ -81,3 +89,76 @@ def build_reach_parser(subparsers, *, cmd_reach: Callable) -> None:
         ),
     )
     watch_p.set_defaults(func=cmd_reach)
+
+    # setup (install upstream tools)
+    setup_p = reach_sub.add_parser(
+        "setup",
+        help="Install upstream tools for reach capabilities",
+        description=(
+            "Install upstream CLIs and packages (yt-dlp, feedparser, gh, "
+            "bili-cli, twitter-cli, rdt-cli, OpenCLI, etc.) so the agent "
+            "can access more platforms. Uses pipx or pip. Safe mode and "
+            "dry-run available."
+        ),
+    )
+    setup_p.add_argument(
+        "channels",
+        nargs="*",
+        default=None,
+        help="Channels to install (e.g. youtube twitter reddit). Default: zero-config channels only.",
+    )
+    setup_p.add_argument(
+        "--all",
+        action="store_true",
+        help="Install all channels (zero-config + optional)",
+    )
+    setup_p.add_argument(
+        "--safe",
+        action="store_true",
+        help="Safe mode: no auto system changes, only report what would be done",
+    )
+    setup_p.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Preview all operations without executing anything",
+    )
+    setup_p.set_defaults(func=cmd_reach)
+
+    # configure (manage credentials)
+    config_p = reach_sub.add_parser(
+        "configure",
+        help="Manage credentials: cookies, proxy, API keys",
+        description=(
+            "Store and manage credentials for reach backends. "
+            "Supported: twitter-cookies, reddit-cookies, xhs-cookies, "
+            "xueqiu-cookies, proxy, groq-key, exa-key, from-browser."
+        ),
+    )
+    config_p.add_argument(
+        "key",
+        nargs="?",
+        default=None,
+        help="Configuration key (e.g. twitter-cookies, proxy, groq-key, from-browser)",
+    )
+    config_p.add_argument(
+        "value",
+        nargs="?",
+        default=None,
+        help="Value to set (for from-browser: browser name like 'chrome')",
+    )
+    config_p.add_argument(
+        "--list",
+        action="store_true",
+        help="List current configuration (secrets masked)",
+    )
+    config_p.add_argument(
+        "--remove",
+        action="store_true",
+        help="Remove a configuration key",
+    )
+    config_p.add_argument(
+        "--clear-all",
+        action="store_true",
+        help="Clear all stored credentials",
+    )
+    config_p.set_defaults(func=cmd_reach)
