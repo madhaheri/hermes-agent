@@ -110,6 +110,17 @@ TOOLSETS = {
         "tools": ["x_search"],
         "includes": []
     },
+
+    "reach": {
+        "description": (
+            "Internet-reach capability doctor — probe which platforms "
+            "(Twitter, Reddit, YouTube, GitHub, RSS, web, Bilibili, "
+            "XiaoHongShu, LinkedIn, etc.) are accessible and resolve the "
+            "best backend for each. Diagnostic tools, always available."
+        ),
+        "tools": ["reach_doctor", "reach_resolve"],
+        "includes": []
+    },
     
     "vision": {
         "description": "Image analysis and vision tools",

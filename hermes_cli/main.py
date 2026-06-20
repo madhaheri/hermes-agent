@@ -294,6 +294,7 @@ from hermes_cli.subcommands.prompt_size import build_prompt_size_parser
 from hermes_cli.subcommands.memory import build_memory_parser
 from hermes_cli.subcommands.acp import build_acp_parser
 from hermes_cli.subcommands.tools import build_tools_parser
+from hermes_cli.subcommands.reach import build_reach_parser
 from hermes_cli.subcommands.insights import build_insights_parser
 from hermes_cli.subcommands.skills import build_skills_parser
 from hermes_cli.subcommands.pairing import build_pairing_parser
@@ -11120,6 +11121,7 @@ _BUILTIN_SUBCOMMANDS = frozenset(
         "gui", "desktop", "kanban", "login", "logout", "logs", "lsp", "mcp", "memory", "migrate",
         "model", "pairing", "plugins", "portal", "postinstall", "profile", "proxy",
         "prompt-size",
+        "reach",
         "send", "sessions", "setup",
         "skills", "slack", "status", "tools", "uninstall", "update",
         "version", "webhook", "whatsapp", "whatsapp-cloud", "chat", "secrets", "security",
@@ -11537,6 +11539,85 @@ def cmd_tools(args):
         from hermes_cli.tools_config import tools_command
 
         tools_command(args)
+
+
+def cmd_reach(args):
+    """Handler for ``hermes reach`` — internet-reach capability doctor."""
+    action = getattr(args, "reach_action", None) or "doctor"
+
+    from agent.reach_capabilities import get_reach_registry, format_doctor_output
+
+    registry = get_reach_registry()
+
+    if action == "list":
+        caps = registry.all_capabilities()
+        print("")
+        print("  Internet Reach — Capability Registry")
+        print("  " + "=" * 48)
+        print("")
+        for cap in caps:
+            backends = ", ".join(
+                f"{b.name}({b.priority})" for b in sorted(cap.backends, key=lambda x: x.priority)
+            )
+            print(f"  {cap.name}")
+            print(f"    {cap.description}")
+            print(f"    backends: {backends}")
+            print("")
+        print(f"  {len(caps)} capabilities registered")
+        print("")
+        return
+
+    if action == "resolve":
+        cap_name = getattr(args, "capability", None)
+        if not cap_name:
+            print("Usage: hermes reach resolve <capability>", file=sys.stderr)
+            sys.exit(1)
+        backend = registry.resolve(cap_name)
+        cap = registry.get(cap_name)
+        if cap is None:
+            print(f"Unknown capability: {cap_name}", file=sys.stderr)
+            sys.exit(1)
+        print(f"Capability: {cap_name}")
+        print(f"Description: {cap.description}")
+        if backend:
+            print(f"Resolved backend: {backend.name}")
+            print(f"  {backend.description}")
+        else:
+            print("No available backend — all probes failed")
+            for result in cap.probe_all():
+                icon = result.icon()
+                print(f"  {icon} {result.backend_name}: {result.detail}")
+                if result.fix:
+                    for step in result.fix:
+                        print(f"       fix: {step}")
+        return
+
+    if action == "watch":
+        # Silent if all OK, print only failures
+        results = registry.doctor()
+        failures = []
+        for cap in results:
+            if not cap.get("best"):
+                failures.append(cap)
+        if failures:
+            print(f"Reach watch: {len(failures)} capability(ies) unavailable")
+            for cap in failures:
+                print(f"  ❌ {cap['capability']}: {cap['description']}")
+                for b in cap["backends"]:
+                    if not b["available"] and b["fix"]:
+                        print(f"     fix: {b['fix'][0]}")
+                        break
+        # Silent on success — suitable for cron
+        return
+
+    # Default: doctor
+    cap_name = getattr(args, "capability", None)
+    json_out = getattr(args, "json", False)
+    results = registry.doctor(cap_name)
+    if not results and cap_name:
+        print(f"Unknown capability: {cap_name}", file=sys.stderr)
+        sys.exit(1)
+    print(format_doctor_output(results, json_output=json_out))
 
 
 def cmd_insights(args):
@@ -12019,6 +12100,11 @@ def main():
     # tools command  (parser built in hermes_cli/subcommands/tools.py)
     # =========================================================================
     build_tools_parser(subparsers, cmd_tools=cmd_tools)
+
+    # =========================================================================
+    # reach command — internet-reach capability doctor
+    # =========================================================================
+    build_reach_parser(subparsers, cmd_reach=cmd_reach)
 
     # =========================================================================
     # computer-use command — manage Computer Use (cua-driver) on macOS
