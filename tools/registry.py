@@ -39,11 +39,37 @@ def _is_registry_register_call(node: ast.AST) -> bool:
     )
 
 
+def _is_module_level_tools_assignment(node: ast.AST) -> bool:
+    """Return True when *node* is a module-level ``__tools__ = [...]`` assignment.
+
+    Accepts any assignment (``=`` or annotated ``:=``-style) whose single
+    target is the name ``__tools__`` and whose value is a list literal. We do
+    not introspect the list contents — the presence of the declaration is
+    enough to mark the module as a tool module whose import should trigger
+    registration side effects.
+    """
+    if not isinstance(node, ast.Assign):
+        return False
+    if len(node.targets) != 1:
+        return False
+    target = node.targets[0]
+    if not (isinstance(target, ast.Name) and target.id == "__tools__"):
+        return False
+    return isinstance(node.value, ast.List)
+
+
 def _module_registers_tools(module_path: Path) -> bool:
-    """Return True when the module contains a top-level ``registry.register(...)`` call.
+    """Return True when the module self-registers tools.
+
+    A module qualifies if it contains either:
+
+    * a top-level ``registry.register(...)`` call, **or**
+    * a module-level ``__tools__ = [...]`` assignment declaring its tool names
+      explicitly.
 
     Only inspects module-body statements so that helper modules which happen
-    to call ``registry.register()`` inside a function are not picked up.
+    to call ``registry.register()`` or define ``__tools__`` inside a function
+    are not picked up.
     """
     try:
         source = module_path.read_text(encoding="utf-8")
@@ -51,7 +77,10 @@ def _module_registers_tools(module_path: Path) -> bool:
     except (OSError, SyntaxError):
         return False
 
-    return any(_is_registry_register_call(stmt) for stmt in tree.body)
+    return any(
+        _is_registry_register_call(stmt) or _is_module_level_tools_assignment(stmt)
+        for stmt in tree.body
+    )
 
 
 def discover_builtin_tools(tools_dir: Optional[Path] = None) -> List[str]:
@@ -193,6 +222,20 @@ class ToolRegistry:
         """Return a registered tool entry by name, or None."""
         with self._lock:
             return self._tools.get(name)
+
+    def get(self, name: str) -> Optional[ToolEntry]:
+        """Alias for :meth:`get_entry`.
+
+        Provided so the registry supports a familiar dict-like API::
+
+            entry = registry.get("terminal")
+            if "terminal" in registry: ...
+        """
+        return self.get_entry(name)
+
+    def __contains__(self, name: str) -> bool:
+        """Return True when *name* is a registered tool (dict-like membership)."""
+        return self.get_entry(name) is not None
 
     def get_registered_toolset_names(self) -> List[str]:
         """Return sorted unique toolset names present in the registry."""

@@ -1245,6 +1245,7 @@ if __name__ == "__main__":
             "Set EXA_API_KEY, PARALLEL_API_KEY, TAVILY_API_KEY, FIRECRAWL_API_KEY, FIRECRAWL_API_URL"
             f"{_firecrawl_backend_help_suffix()}"
         )
+        print("Or use free alternatives: Jina Reader for web pages (no key), Exa for search (free key at exa.ai), or run: hermes reach setup")
 
     if not nous_available:
         print("❌ No auxiliary model available for LLM content processing")
@@ -1316,7 +1317,7 @@ from tools.registry import registry, tool_error
 
 WEB_SEARCH_SCHEMA = {
     "name": "web_search",
-    "description": "Search the web for information. Returns up to 5 results by default with titles, URLs, and descriptions. The query is passed through to the configured backend, so operators such as site:domain, filetype:pdf, intitle:word, -term, and \"exact phrase\" may work when the backend supports them.",
+    "description": "Search the web for information. Returns up to 5 results by default with titles, URLs, and descriptions. The query is passed through to the configured backend, so operators such as site:domain, filetype:pdf, intitle:word, -term, and \\\"exact phrase\\\" may work when the backend supports them. If web search is not configured, free alternatives: Exa (exa.ai, free key), DuckDuckGo (ddgs package, no key). Run 'hermes reach setup exa' to auto-configure.",
     "parameters": {
         "type": "object",
         "properties": {
@@ -1338,7 +1339,7 @@ WEB_SEARCH_SCHEMA = {
 
 WEB_EXTRACT_SCHEMA = {
     "name": "web_extract",
-    "description": "Extract content from web page URLs. Returns page content in markdown format. Also works with PDF URLs (arxiv papers, documents, etc.) — pass the PDF link directly and it converts to markdown text. Pages under 5000 chars return full markdown; larger pages are LLM-summarized and capped at ~5000 chars per page. Pages over 2M chars are refused. If a URL fails or times out, use the browser tool to access it instead.",
+    "description": "Extract content from web page URLs. Returns page content in markdown format. Also works with PDF URLs (arxiv papers, documents, etc.) — pass the PDF link directly and it converts to markdown text. Pages under 5000 chars return full markdown; larger pages are LLM-summarized and capped at ~5000 chars per page. Pages over 2M chars are refused. If a URL fails or times out, use the browser tool to access it instead. If web extraction is not configured, free alternative: Jina Reader (curl https://r.jina.ai/URL — no API key needed). Run 'hermes reach doctor web.read' to check availability.",
     "parameters": {
         "type": "object",
         "properties": {

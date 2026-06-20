@@ -23,6 +23,12 @@ def build_doctor_parser(subparsers, *, cmd_doctor: Callable) -> None:
         "--fix", action="store_true", help="Attempt to fix issues automatically"
     )
     doctor_parser.add_argument(
+        "--functional",
+        action="store_true",
+        help="Also run functional tool probes (actually test web_search, web_extract, "
+             "x_search, etc. with real queries — slower, makes network calls)",
+    )
+    doctor_parser.add_argument(
         "--ack",
         metavar="ADVISORY_ID",
         default=None,

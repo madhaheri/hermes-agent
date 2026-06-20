@@ -2342,5 +2342,33 @@ def run_doctor(args):
     else:
         print(color("─" * 60, Colors.GREEN))
         print(color("  All checks passed! 🎉", Colors.GREEN, Colors.BOLD))
-    
+
+    # Functional tool probes (optional, --functional flag)
+    if getattr(args, 'functional', False):
+        _section("Functional Tool Probes")
+        try:
+            from agent.reach_capabilities import get_reach_registry, format_doctor_output
+            reach_registry = get_reach_registry()
+            results = reach_registry.doctor(functional=True)
+            available = sum(1 for r in results if r.get("best"))
+            total = len(results)
+            for cap in results:
+                best = cap.get("best")
+                if best:
+                    check_ok(f"{cap['capability']}", f"→ {best}")
+                else:
+                    any_warning = any(b["status"] == "misconfigured" for b in cap["backends"])
+                    if any_warning:
+                        check_warn(f"{cap['capability']}", cap["description"])
+                    else:
+                        check_fail(f"{cap['capability']}", cap["description"])
+                    for b in cap["backends"]:
+                        if not b["available"] and b["fix"]:
+                            check_info(f"fix: {b['fix'][0]}")
+                            break
+            print()
+            print(color(f"  {available}/{total} capabilities functionally verified", Colors.DIM))
+        except Exception as exc:
+            check_warn("Functional probes failed", str(exc)[:200])
+
     print()

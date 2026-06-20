@@ -1183,7 +1183,7 @@ def test_save_platform_tools_preserves_mcp_server_names():
     assert "another-mcp" in saved
 
 
-def test_get_platform_tools_recovers_non_configurable_toolsets_from_composite():
+def test_get_platform_tools_recovers_non_configurable_toolsets_from_composite(monkeypatch):
     """Non-configurable toolsets whose tools are in the composite but not in
     CONFIGURABLE_TOOLSETS should still appear in the result.
     """
@@ -1206,6 +1206,26 @@ def test_get_platform_tools_recovers_non_configurable_toolsets_from_composite():
     test_platforms = {
         "_test_platform": {"label": "Test", "default_toolset": "hermes-_test_platform"},
     }
+
+    # Other tests in the hermes_cli directory (notably
+    # test_setup_blank_slate.test_tool_schema_builder_yields_only_file_and_terminal_tools)
+    # call model_tools.get_tool_definitions(), which registers tools into the
+    # global tool registry as a side effect — e.g. ``read_terminal`` gets added
+    # to the ``terminal`` toolset in the registry.  ``resolve_toolset`` merges
+    # those registry tools into the static ``TOOLSETS`` definitions, so
+    # ``resolve_toolset("terminal")`` returns ``['process', 'read_terminal',
+    # 'terminal']`` instead of ``['process', 'terminal']``.  The extra
+    # ``read_terminal`` is absent from the fake composite's tool list, so the
+    # subset check in ``_get_platform_tools`` fails and ``terminal`` is never
+    # recovered — even though this test patches ``toolsets.TOOLSETS``.
+    #
+    # Patch the registry lookup so ``get_toolset`` only sees the static
+    # ``TOOLSETS`` dict (which we already patch below).  This makes the test
+    # independent of registry state leaked by prior tests.
+    monkeypatch.setattr(
+        "tools.registry.registry.get_tool_names_for_toolset",
+        lambda _name: [],
+    )
 
     with mock_patch("hermes_cli.tools_config.PLATFORMS", {**PLATFORMS, **test_platforms}):
         with mock_patch("toolsets.TOOLSETS", fake_toolsets):

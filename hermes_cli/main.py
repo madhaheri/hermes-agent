@@ -11112,6 +11112,14 @@ def cmd_logs(args):
 # below in ``main()``. Missing an entry here only costs a one-time
 # discovery; extra entries here would let a plugin command silently fail
 # to parse.
+# WARNING: This set is used by _plugin_cli_discovery_needed() BEFORE argparse
+# runs, so it cannot be auto-derived from registered subparsers. When you add a
+# new subcommand, you MUST add its name here too — otherwise `hermes <new_cmd>`
+# triggers a 500-650ms plugin discovery penalty on every invocation.
+#
+# The test test_builtin_subcommands_covers_all_parsers in
+# tests/hermes_cli/test_main_integrity.py asserts this set stays in sync with
+# the actually registered subparsers. Run it after adding/removing subcommands.
 _BUILTIN_SUBCOMMANDS = frozenset(
     {
         "acp", "auth", "backup", "bundles", "checkpoints", "claw", "completion",
@@ -11801,9 +11809,75 @@ def cmd_plugins(args):
 
 
 def cmd_mcp(args):
+    action = getattr(args, "mcp_action", None)
+    if action == "doctor":
+        _mcp_doctor(args)
+        return
     from hermes_cli.mcp_config import mcp_command
 
     mcp_command(args)
+
+
+def _mcp_doctor(args):
+    """Batch-test all configured MCP servers."""
+    from hermes_cli.colors import Colors, color
+
+    print()
+    print(color("┌─────────────────────────────────────────────────────────┐", Colors.CYAN))
+    print(color("│              🔌 MCP Server Doctor                        │", Colors.CYAN))
+    print(color("└─────────────────────────────────────────────────────────┘", Colors.CYAN))
+
+    try:
+        from hermes_cli.mcp_config import _get_mcp_servers, cmd_mcp_test
+        servers = _get_mcp_servers()
+    except Exception as exc:
+        print(f"  ❌ Cannot load MCP config: {exc}")
+        return
+
+    if not servers:
+        print()
+        print("  No MCP servers configured.")
+        print(f"  Add one with: {color('hermes mcp add <name> --url <url>', Colors.DIM)}")
+        print()
+        return
+
+    print()
+    ok = 0
+    fail = 0
+    for name, config in servers.items():
+        url = config.get("url", config.get("command", "?"))
+        # Use the existing test command's logic by calling it with a mock args object
+        try:
+            import argparse
+            test_args = argparse.Namespace()
+            test_args.name = name
+            # Capture stdout from cmd_mcp_test
+            import io, contextlib
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+                cmd_mcp_test(test_args)
+            output = buf.getvalue()
+            # If output contains success indicators, it passed
+            if any(w in output.lower() for w in ["✓", "ok", "success", "connected", "available"]):
+                print(f"  ✓ {color(name, Colors.GREEN)} — {url}")
+                ok += 1
+            else:
+                print(f"  ✗ {color(name, Colors.RED)} — {url}")
+                detail = output.strip().split("\n")[0][:100] if output.strip() else "connection failed"
+                print(f"    {color(f'→ {detail}', Colors.DIM)}")
+                fail += 1
+        except Exception as exc:
+            print(f"  ✗ {color(name, Colors.RED)} — {url}")
+            print(f"    {color(f'→ {str(exc)[:100]}', Colors.DIM)}")
+            fail += 1
+
+    print()
+    total = ok + fail
+    if fail == 0:
+        print(color(f"  {ok}/{total} servers healthy ✓", Colors.GREEN, Colors.BOLD))
+    else:
+        print(color(f"  {ok}/{total} servers healthy, {fail} failed", Colors.YELLOW, Colors.BOLD))
+    print()
 
 
 def cmd_claw(args):

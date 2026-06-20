@@ -2278,6 +2278,17 @@ DEFAULT_CONFIG = {
         "allow_lazy_installs": True,
     },
 
+    # HTTP/HTTPS proxy for tool calls that need network access in
+    # restricted environments (e.g. accessing Reddit/Twitter from China).
+    # When set, Hermes exports HTTP_PROXY/HTTPS_PROXY for subprocess
+    # calls and uses it for outbound HTTP requests from tools.
+    # Also configurable via `hermes reach configure proxy URL`.
+    "proxy": {
+        "url": "",  # e.g. "http://user:pass@host:port"
+        # If True, also set ALL_PROXY for SOCKS-aware tools
+        "apply_to_all": False,
+    },
+
     "cron": {
         # Active cron SCHEDULER provider (Axis B — the trigger that decides
         # WHEN a due job fires). Empty string = the built-in in-process 60s
@@ -4380,7 +4391,7 @@ _KNOWN_ROOT_KEYS = {
     "fallback_providers", "credential_pool_strategies", "toolsets",
     "agent", "terminal", "display", "compression", "delegation",
     "auxiliary", "custom_providers", "context", "memory", "gateway",
-    "sessions", "streaming", "updates", "mcp_servers",
+    "sessions", "streaming", "updates", "mcp_servers", "proxy",
 }
 
 # Valid fields inside a custom_providers list entry

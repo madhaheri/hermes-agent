@@ -339,6 +339,61 @@ class TestBuiltinDiscovery:
         assert imported == ["tools.alpha"]
         mock_import.assert_called_once_with("tools.alpha")
 
+    def test_discovers_module_with_tools_list_declaration(self, tmp_path):
+        """A module declaring ``__tools__ = [...]`` is treated as a tool module."""
+        tools_dir = tmp_path / "tools"
+        tools_dir.mkdir()
+        (tools_dir / "__init__.py").write_text("", encoding="utf-8")
+        (tools_dir / "registry.py").write_text("", encoding="utf-8")
+        # gamma.py uses the explicit __tools__ declaration instead of
+        # a top-level registry.register() call.
+        (tools_dir / "gamma.py").write_text(
+            "__tools__ = ['gamma_one', 'gamma_two']\n",
+            encoding="utf-8",
+        )
+        (tools_dir / "beta.py").write_text("VALUE = 1\n", encoding="utf-8")
+
+        with patch("tools.registry.importlib.import_module") as mock_import:
+            imported = discover_builtin_tools(tools_dir)
+
+        assert imported == ["tools.gamma"]
+        mock_import.assert_called_once_with("tools.gamma")
+
+    def test_tools_list_inside_function_is_not_detected(self, tmp_path):
+        """``__tools__`` defined inside a function must not trigger discovery."""
+        tools_dir = tmp_path / "tools"
+        tools_dir.mkdir()
+        (tools_dir / "__init__.py").write_text("", encoding="utf-8")
+        (tools_dir / "registry.py").write_text("", encoding="utf-8")
+        (tools_dir / "inner.py").write_text(
+            "def setup():\n    __tools__ = ['inner_tool']\n",
+            encoding="utf-8",
+        )
+
+        with patch("tools.registry.importlib.import_module") as mock_import:
+            imported = discover_builtin_tools(tools_dir)
+
+        assert imported == []
+        mock_import.assert_not_called()
+
+    def test_non_list_tools_assignment_is_not_detected(self, tmp_path):
+        """A ``__tools__`` assignment whose value is not a list literal is ignored."""
+        tools_dir = tmp_path / "tools"
+        tools_dir.mkdir()
+        (tools_dir / "__init__.py").write_text("", encoding="utf-8")
+        (tools_dir / "registry.py").write_text("", encoding="utf-8")
+        # Tuple, not list — should not qualify.
+        (tools_dir / "tuple_tools.py").write_text(
+            "__tools__ = ('tuple_tool',)\n",
+            encoding="utf-8",
+        )
+
+        with patch("tools.registry.importlib.import_module") as mock_import:
+            imported = discover_builtin_tools(tools_dir)
+
+        assert imported == []
+        mock_import.assert_not_called()
+
 
 class TestEmojiMetadata:
     """Verify per-tool emoji registration and lookup."""
