@@ -9,6 +9,9 @@ Provides the ``hermes reach`` command group:
   * ``hermes reach watch``   — quick health check (for cron jobs)
   * ``hermes reach setup``   — install upstream tools for reach capabilities
   * ``hermes reach configure`` — manage credentials (cookies, proxy, keys)
+  * ``hermes reach uninstall`` — remove reach-installed tools + config + skill
+  * ``hermes reach check-update`` — check for newer versions of installed tools
+  * ``hermes reach setup-opencli`` — guided OpenCLI Chrome extension setup
 
 Handler is injected from main.py to avoid import cycles.
 """
@@ -162,3 +165,52 @@ def build_reach_parser(subparsers, *, cmd_reach: Callable) -> None:
         help="Clear all stored credentials",
     )
     config_p.set_defaults(func=cmd_reach)
+
+    # uninstall
+    uninstall_p = reach_sub.add_parser(
+        "uninstall",
+        help="Remove reach-installed tools, config, and skill",
+        description=(
+            "Removes tools installed by `hermes reach setup` (yt-dlp, "
+            "feedparser, bili-cli, twitter-cli, etc.), the reach config "
+            "directory (cookies, proxy, keys), the agent-reach skill, "
+            "and the Exa MCP server. Use --keep-config to retain credentials."
+        ),
+    )
+    uninstall_p.add_argument(
+        "channels",
+        nargs="*",
+        default=None,
+        help="Optional: uninstall only tools for these channels. Default: all.",
+    )
+    uninstall_p.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Preview what would be removed without executing",
+    )
+    uninstall_p.add_argument(
+        "--keep-config",
+        action="store_true",
+        help="Keep cookies/credentials (only remove tools and skill)",
+    )
+    uninstall_p.set_defaults(func=cmd_reach)
+
+    # check-update
+    update_p = reach_sub.add_parser(
+        "check-update",
+        help="Check for newer versions of reach-installed tools",
+        description="Check if yt-dlp, feedparser, bili-cli, etc. have updates available.",
+    )
+    update_p.set_defaults(func=cmd_reach)
+
+    # setup-opencli (guided Chrome extension setup)
+    opencli_p = reach_sub.add_parser(
+        "setup-opencli",
+        help="Guided OpenCLI Chrome extension setup",
+        description=(
+            "OpenCLI lets the agent access Reddit, XiaoHongShu, Bilibili "
+            "subtitles, and Twitter via your browser's login session. "
+            "This command guides you through installing the Chrome extension."
+        ),
+    )
+    opencli_p.set_defaults(func=cmd_reach)

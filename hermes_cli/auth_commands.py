@@ -775,7 +775,7 @@ def _interactive_strategy() -> None:
     print(f"Set {provider} strategy to: {strategy}")
 
 
-def auth_command(args) -> None:
+def auth_spotify_command(args):\n    # ... (omitted for brevity) ...\n    pass\n\n\ndef _auth_browser_import_command(args):\n    \"\"\"Import cookies from browser and store them.\"\"\"\n    from agent.reach_installer import export_browser_cookies\n\n    browser = args.browser\n    domain = args.domain\n    target = args.target\n\n    print(f\"  Importing cookies from {browser}...\")\n    try:\n        # Reuse the reach installer's cookie extraction logic\n        cookie_file = export_browser_cookies(browser)\n        if not cookie_file:\n            print(f\"  ❌ Extraction failed: no cookies found for {browser}.\", file=sys.stderr)\n            sys.exit(1)\n\n        if target == \"reach\":\n            # Move to reach-config store\n            from agent.reach_installer import _reach_config_dir\n            dest = _reach_config_dir() / f\"{browser}_cookies.txt\"\n            import shutil\n            shutil.copy(cookie_file, dest)\n            print(f\"  ✅ Cookies imported to reach-config: {dest}\")\n        else:\n            # Add to hermes auth pool (TBD / Placeholder for global auth import)\n            print(\"  ⚠️  Global auth import not yet implemented. Cookies kept in reach-config.\")\n\n    except Exception as exc:\n        print(f\"  ❌ Error: {exc}\", file=sys.stderr)\n        sys.exit(1)\n\n\ndef auth_command(args) -> None:
     action = getattr(args, "auth_action", "")
     if action == "add":
         auth_add_command(args)
@@ -797,6 +797,9 @@ def auth_command(args) -> None:
         return
     if action == "spotify":
         auth_spotify_command(args)
+        return
+    if action == "browser-import":
+        _auth_browser_import_command(args)
         return
     # No subcommand — launch interactive mode
     _interactive_auth()

@@ -86,7 +86,11 @@ MAX_STDERR_BYTES = 10_000    # 10 KB
 # HERMES_RPC_DIR / TZ / HOME are injected explicitly after scrubbing.
 _SAFE_ENV_PREFIXES = ("PATH", "HOME", "USER", "LANG", "LC_", "TERM",
                       "TMPDIR", "TMP", "TEMP", "SHELL", "LOGNAME",
-                      "XDG_", "PYTHONPATH", "VIRTUAL_ENV", "CONDA")
+                      "XDG_", "PYTHONPATH", "VIRTUAL_ENV", "CONDA",
+                      # Proxy vars — needed for network access in restricted environments.
+                      # These don't match _SECRET_SUBSTRINGS (no KEY/TOKEN/SECRET/PASSWORD).
+                      "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY",
+                      "http_proxy", "https_proxy", "all_proxy", "no_proxy")
 _SECRET_SUBSTRINGS = ("KEY", "TOKEN", "SECRET", "PASSWORD", "CREDENTIAL",
                       "PASSWD", "AUTH", "DSN", "WEBHOOK")
 
@@ -1230,6 +1234,13 @@ def execute_code(
         # passed through — without those, the child can't create a socket
         # or spawn a subprocess.  See ``_scrub_child_env`` for the rules.
         child_env = _scrub_child_env(os.environ)
+        # Inject proxy config from config.yaml (proxy.url) — the scrubbed
+        # env may have lost proxy vars if they weren't on the safe prefix list.
+        try:
+            from agent.proxy_helper import load_proxy_config
+            child_env.update(load_proxy_config())
+        except Exception:
+            pass
         child_env["HERMES_RPC_SOCKET"] = rpc_endpoint
         child_env["PYTHONDONTWRITEBYTECODE"] = "1"
         # Force UTF-8 for the child's stdio and default file encoding.

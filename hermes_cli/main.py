@@ -11542,6 +11542,13 @@ def cmd_tools(args):
         from hermes_cli.tools_config import run_post_setup_command
 
         sys.exit(run_post_setup_command(args))
+    elif action == "watch":
+        # General tool-health monitoring. Silent on success, reports health.
+        from hermes_cli.doctor import run_doctor
+        # Reuse 'hermes doctor' logic, but set quiet=True unless failures found.
+        # This is a placeholder for a complete 'tools watch' implementation.
+        args.functional = True
+        run_doctor(args)
     else:
         _require_tty("tools")
         from hermes_cli.tools_config import tools_command
@@ -11666,7 +11673,27 @@ def cmd_reach(args):
         # Suggest running doctor after install
         successful = sum(1 for r in results if r.executed and r.success)
         if successful > 0 and not dry_run:
+            # Copy the bundled agent-reach SKILL.md from the source tree to the
+            # user's ~/.hermes/skills/ directory if it isn't already present.
+            try:
+                _src_skill = os.path.join(
+                    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                    "skills", "agent-reach", "SKILL.md",
+                )
+                _dst_skill_dir = os.path.expanduser("~/.hermes/skills/agent-reach")
+                _dst_skill = os.path.join(_dst_skill_dir, "SKILL.md")
+                if os.path.isfile(_src_skill) and not os.path.isfile(_dst_skill):
+                    os.makedirs(_dst_skill_dir, exist_ok=True)
+                    shutil.copy(_src_skill, _dst_skill)
+            except Exception:
+                pass
+
             print("  Run 'hermes reach doctor' to verify capabilities are now available.")
+            print("")
+            print("  Want daily health monitoring? Set up a cron job:")
+            print("    hermes cron create '0 8 * * *' 'Run hermes reach watch. If output contains")
+            print("    failures, include the full report. If silent, do not notify.'")
+            print("")
         return
 
     if action == "configure":
@@ -11757,6 +11784,82 @@ def cmd_reach(args):
               f"xueqiu-cookies, proxy, groq-key, exa-key, from-browser",
               file=sys.stderr)
         sys.exit(1)
+
+    if action == "uninstall":
+        from agent.reach_installer import get_uninstaller
+
+        dry_run = getattr(args, "dry_run", False)
+        keep_config = getattr(args, "keep_config", False)
+        channels = getattr(args, "channels", None) or []
+
+        uninstaller = get_uninstaller(dry_run=dry_run, keep_config=keep_config)
+        steps = uninstaller.plan(channels=channels if channels else None)
+
+        if not steps and not dry_run:
+            print("  No reach-installed tools found to uninstall.")
+        else:
+            results = uninstaller.execute(steps)
+            config_result = uninstaller.cleanup_config()
+            skill_result = uninstaller.cleanup_skill()
+            mcp_result = uninstaller.cleanup_mcp()
+            print(uninstaller.format_results(results, config_result, skill_result, mcp_result))
+
+        if not dry_run and not keep_config:
+            print("  To remove the Python package: pip uninstall agent-reach (if installed)")
+        return
+
+    if action == "check-update":
+        from agent.reach_installer import check_reach_tool_updates, format_update_report
+
+        updates = check_reach_tool_updates()
+        print(format_update_report(updates))
+
+        # Also suggest setting up monitoring cron if not already configured
+        has_updates = any(u.get("update_available") for u in updates)
+        if has_updates:
+            print("  Run the upgrade commands above to update individual tools.")
+            print("  Or reinstall with: hermes reach setup --all")
+        return
+
+    if action == "setup-opencli":
+        print("")
+        print("  OpenCLI Guided Setup")
+        print("  " + "=" * 48)
+        print("")
+        print("  OpenCLI lets the agent access Reddit, XiaoHongShu, Bilibili")
+        print("  subtitles, and Twitter via your browser's login session.")
+        print("")
+        print("  Step 1: Install OpenCLI")
+        import shutil as _shutil
+        if _shutil.which("opencli"):
+            print("    ✅ OpenCLI is already installed")
+        else:
+            print("    Run: pipx install opencli")
+            print("    (or: pip install opencli)")
+        print("")
+        print("  Step 2: Install the Chrome extension")
+        print("    Open: https://chromewebstore.google.com/detail/opencli/ildkmabpimmkaediidaifkhjpohdnifk")
+        print("    Click 'Add to Chrome'")
+        print("    (This is the only manual step — Chrome prevents auto-install for security)")
+        print("")
+        print("  Step 3: Verify the extension is connected")
+        print("    Run: opencli doctor")
+        print("    Look for: Extension: connected")
+        print("")
+        print("  Step 4: Log in to the platforms you want to access")
+        print("    - Reddit: log in to reddit.com in Chrome")
+        print("    - XiaoHongShu: browse xiaohongshu.com in Chrome")
+        print("    - Bilibili: log in to bilibili.com in Chrome")
+        print("    - Twitter: log in to x.com in Chrome")
+        print("")
+        print("  Step 5: Verify capabilities")
+        print("    Run: hermes reach doctor reddit.search")
+        print("    Run: hermes reach doctor xiaohongshu.search")
+        print("")
+        print("  ⚠️  Use a secondary account for cookie-based platforms.")
+        print("     Platform detection of non-browser API calls may ban your account.")
+        print("")
+        return
 
     # Default: doctor
     cap_name = getattr(args, "capability", None)

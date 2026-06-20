@@ -387,6 +387,13 @@ def _make_run_env(env: dict) -> dict:
     from hermes_constants import apply_subprocess_home_env
     apply_subprocess_home_env(run_env)
 
+    # Inject proxy config from config.yaml (proxy.url) or reach-config store
+    try:
+        from agent.proxy_helper import load_proxy_config
+        run_env.update(load_proxy_config())
+    except Exception:
+        pass
+
     # Inject ContextVar-based session vars into subprocess env.
     # ContextVars don't propagate to child processes, so we bridge them here.
     try:

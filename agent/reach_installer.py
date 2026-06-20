@@ -634,6 +634,355 @@ class ReachConfigurator:
 
 
 # ---------------------------------------------------------------------------
+# Uninstall
+# ---------------------------------------------------------------------------
+
+
+# Tools that `hermes reach setup` can install, mapped to their pip/pipx names
+# for uninstall purposes. CLI name → (uninstall command prefix, package name).
+_REACH_INSTALLED_TOOLS: Dict[str, Tuple[List[str], str]] = {
+    "yt-dlp": (["pip3", "uninstall", "-y"], "yt-dlp"),
+    "feedparser": (["pip3", "uninstall", "-y"], "feedparser"),
+    "bili": (["pipx", "uninstall"], "bilibili-cli"),
+    "twitter": (["pipx", "uninstall"], "twitter-cli"),
+    "xurl": (["pipx", "uninstall"], "xurl"),
+    "opencli": (["pipx", "uninstall"], "opencli"),
+    "rdt": (["pipx", "uninstall"], "rdt-cli"),
+}
+
+
+@dataclass
+class UninstallStep:
+    description: str
+    command: List[str]
+    cli_name: str
+    can_fail: bool = True  # uninstall is best-effort
+
+
+@dataclass
+class UninstallResult:
+    step: UninstallStep
+    executed: bool
+    success: bool
+    output: str = ""
+    skipped: bool = False
+    skip_reason: str = ""
+
+
+class ReachUninstaller:
+    """Removes tools and config installed by `hermes reach setup`."""
+
+    def __init__(self, dry_run: bool = False, keep_config: bool = False) -> None:
+        self.dry_run = dry_run
+        self.keep_config = keep_config  # keep cookies/credentials
+        self._pip = self._detect_pip()
+        self._pipx = "pipx" if shutil.which("pipx") else ""
+
+    def _detect_pip(self) -> str:
+        for cmd in ["pip3", "pip"]:
+            if shutil.which(cmd):
+                return cmd
+        return f"{sys.executable} -m pip"
+
+    def plan(self, channels: Optional[List[str]] = None) -> List[UninstallStep]:
+        """Generate an uninstall plan for tools installed by reach setup."""
+        steps: List[UninstallStep] = []
+
+        # Determine which CLIs to try removing
+        clis_to_remove: List[str] = []
+        if channels:
+            channel_to_clis = {
+                "youtube": ["yt-dlp"],
+                "rss": ["feedparser"],
+                "bilibili": ["bili"],
+                "twitter": ["twitter", "xurl"],
+                "reddit": ["opencli", "rdt"],
+                "xiaohongshu": ["opencli"],
+            }
+            for ch in channels:
+                clis_to_remove.extend(channel_to_clis.get(ch, []))
+        else:
+            # All tools that reach might have installed
+            clis_to_remove = list(_REACH_INSTALLED_TOOLS.keys())
+
+        # Deduplicate while preserving order
+        seen = set()
+        for cli in clis_to_remove:
+            if cli in seen:
+                continue
+            seen.add(cli)
+            if cli not in _REACH_INSTALLED_TOOLS:
+                continue
+            if not shutil.which(cli):
+                continue  # not installed, skip
+            prefix, pkg = _REACH_INSTALLED_TOOLS[cli]
+            # Use pipx if available and the tool is pipx-installed, else pip
+            if self._pipx and prefix[0] == "pipx":
+                cmd = [self._pipx, "uninstall", pkg]
+            else:
+                cmd = self._pip.split() + ["uninstall", "-y", pkg]
+            steps.append(UninstallStep(
+                description=f"Uninstall {cli} ({pkg})",
+                command=cmd,
+                cli_name=cli,
+            ))
+
+        return steps
+
+    def execute(self, steps: List[UninstallStep]) -> List[UninstallResult]:
+        results: List[UninstallResult] = []
+        for step in steps:
+            if self.dry_run:
+                results.append(UninstallResult(
+                    step=step, executed=False, success=False,
+                    output=f"[DRY RUN] would execute: {' '.join(step.command)}",
+                    skipped=True, skip_reason="dry-run",
+                ))
+                continue
+            try:
+                cmd = step.command
+                r = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+                results.append(UninstallResult(
+                    step=step, executed=True, success=r.returncode == 0,
+                    output=(r.stdout or r.stderr or "").strip()[:500],
+                ))
+            except Exception as exc:
+                results.append(UninstallResult(
+                    step=step, executed=True, success=False,
+                    output=f"Error: {exc}",
+                ))
+        return results
+
+    def cleanup_config(self) -> Dict:
+        """Remove reach config directory (cookies, proxy, keys)."""
+        if self.keep_config:
+            return {"skipped": True, "reason": "--keep-config"}
+        if self.dry_run:
+            return {"dry_run": True, "would_remove": str(_reach_config_dir())}
+        try:
+            cfg_dir = _reach_config_dir()
+            if cfg_dir.exists():
+                shutil.rmtree(cfg_dir)
+            return {"success": True, "removed": str(cfg_dir)}
+        except Exception as exc:
+            return {"error": str(exc)}
+
+    def cleanup_skill(self) -> Dict:
+        """Remove the agent-reach skill file."""
+        try:
+            from hermes_constants import get_hermes_home
+            skill_path = get_hermes_home() / "skills" / "agent-reach" / "SKILL.md"
+        except Exception:
+            skill_path = Path.home() / ".hermes" / "skills" / "agent-reach" / "SKILL.md"
+        if self.dry_run:
+            return {"dry_run": True, "would_remove": str(skill_path)}
+        try:
+            if skill_path.exists():
+                skill_path.unlink()
+                # Remove the directory if empty
+                skill_path.parent.rmdir() if not list(skill_path.parent.iterdir()) else None
+                return {"success": True, "removed": str(skill_path)}
+            return {"skipped": True, "reason": "skill not found"}
+        except Exception as exc:
+            return {"error": str(exc)}
+
+    def cleanup_mcp(self) -> Dict:
+        """Remove Exa MCP server if configured."""
+        if self.dry_run:
+            return {"dry_run": True, "would_remove": "exa-search MCP server"}
+        try:
+            subprocess.run(
+                ["hermes", "mcp", "remove", "exa-search"],
+                capture_output=True, text=True, timeout=10,
+            )
+            return {"success": True, "removed": "exa-search MCP (if it was configured)"}
+        except Exception as exc:
+            return {"error": str(exc)}
+
+    def format_results(self, results: List[UninstallResult], config_result: Dict, skill_result: Dict, mcp_result: Dict) -> str:
+        lines: List[str] = []
+        lines.append("")
+        lines.append("  Internet Reach — Uninstall Report")
+        lines.append("  " + "=" * 48)
+        lines.append("")
+
+        for r in results:
+            if r.skipped:
+                icon = "⏭️"
+            elif r.success:
+                icon = "✅"
+            else:
+                icon = "❌"
+            lines.append(f"  {icon} {r.step.description}")
+            if r.output and not r.skipped:
+                for line in r.output.split("\n")[:2]:
+                    if line.strip():
+                        lines.append(f"     {line.strip()}")
+            lines.append("")
+
+        # Config
+        if config_result.get("skipped"):
+            lines.append(f"  ⏭️ Config retained (--keep-config)")
+        elif config_result.get("dry_run"):
+            lines.append(f"  ⏭️ [DRY RUN] would remove {config_result['would_remove']}")
+        elif config_result.get("success"):
+            lines.append(f"  ✅ Config removed: {config_result['removed']}")
+        else:
+            lines.append(f"  ❌ Config removal failed: {config_result.get('error', '?')}")
+        lines.append("")
+
+        # Skill
+        if skill_result.get("dry_run"):
+            lines.append(f"  ⏭️ [DRY RUN] would remove {skill_result['would_remove']}")
+        elif skill_result.get("success"):
+            lines.append(f"  ✅ Skill removed: {skill_result['removed']}")
+        elif skill_result.get("skipped"):
+            lines.append(f"  ⏭️ Skill not found")
+        else:
+            lines.append(f"  ❌ Skill removal failed: {skill_result.get('error', '?')}")
+        lines.append("")
+
+        # MCP
+        if mcp_result.get("dry_run"):
+            lines.append(f"  ⏭️ [DRY RUN] would remove exa-search MCP")
+        elif mcp_result.get("success"):
+            lines.append(f"  ✅ {mcp_result['removed']}")
+        else:
+            lines.append(f"  ❌ MCP removal failed: {mcp_result.get('error', '?')}")
+        lines.append("")
+
+        return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Update checking
+# ---------------------------------------------------------------------------
+
+
+def check_reach_tool_updates() -> List[Dict]:
+    """Check if reach-installed tools have newer versions available.
+
+    Returns a list of dicts with tool name, current version, and update status.
+    Only checks tools that are actually installed.
+    """
+    results: List[Dict] = []
+
+    # Tools to check and how to get their version
+    tool_checks = [
+        ("yt-dlp", ["yt-dlp", "--version"], "pip3 install --upgrade yt-dlp"),
+        ("feedparser", None, "pip3 install --upgrade feedparser"),  # Python package, check via pip
+        ("bili", ["bili", "--version"], "pipx upgrade bilibili-cli"),
+        ("twitter", ["twitter", "--version"], "pipx upgrade twitter-cli"),
+        ("xurl", ["xurl", "--version"], "pipx upgrade xurl"),
+        ("opencli", ["opencli", "--version"], "pipx upgrade opencli"),
+        ("rdt", ["rdt", "--version"], "pipx upgrade rdt-cli"),
+    ]
+
+    for cli_name, version_cmd, upgrade_cmd in tool_checks:
+        if not shutil.which(cli_name):
+            continue  # not installed
+
+        entry: Dict = {"tool": cli_name, "installed": True, "current_version": "", "update_available": False, "upgrade_cmd": upgrade_cmd}
+
+        # Get current version
+        if version_cmd:
+            try:
+                r = subprocess.run(version_cmd, capture_output=True, text=True, timeout=10)
+                if r.returncode == 0:
+                    entry["current_version"] = r.stdout.strip().split("\n")[0][:50]
+            except Exception:
+                entry["current_version"] = "unknown"
+
+        # Check for updates via pip
+        try:
+            pip_cmd = "pip3" if shutil.which("pip3") else "pip"
+            # Use pip list --outdated for pip-installed, pipx list for pipx
+            if "pipx" in upgrade_cmd and shutil.which("pipx"):
+                r = subprocess.run(["pipx", "list", "--short"], capture_output=True, text=True, timeout=15)
+                # pipx list --short shows package names; we can't easily check outdated
+                # without pipx upgrade --quiet, so just report current
+                entry["update_available"] = False  # conservative
+            else:
+                # For pip packages, check if a newer version exists
+                pkg_name = cli_name.replace("-", "_")
+                r = subprocess.run(
+                    [pip_cmd, "index", "versions", pkg_name],
+                    capture_output=True, text=True, timeout=15,
+                )
+                if r.returncode == 0 and "Available versions:" in r.stdout:
+                    versions_line = [l for l in r.stdout.split("\n") if "Available versions:" in l]
+                    if versions_line:
+                        latest = versions_line[0].split(",")[0].replace("Available versions:", "").strip()
+                        entry["latest_version"] = latest
+                        if entry["current_version"] and entry["current_version"] not in latest:
+                            entry["update_available"] = True
+        except Exception:
+            pass
+
+        results.append(entry)
+
+    return results
+
+
+def format_update_report(updates: List[Dict]) -> str:
+    """Format update check results for display."""
+    lines: List[str] = []
+    lines.append("")
+    lines.append("  Internet Reach — Update Check")
+    lines.append("  " + "=" * 48)
+    lines.append("")
+
+    if not updates:
+        lines.append("  No reach-installed tools found.")
+        lines.append("")
+        return "\n".join(lines)
+
+    has_updates = False
+    for entry in updates:
+        if not entry["installed"]:
+            continue
+        icon = "🆕" if entry.get("update_available") else "✅"
+        version_str = entry.get("current_version", "?")
+        if entry.get("latest_version"):
+            version_str += f" → {entry['latest_version']}"
+        lines.append(f"  {icon} {entry['tool']}: {version_str}")
+        if entry.get("update_available"):
+            has_updates = True
+            lines.append(f"     upgrade: {entry['upgrade_cmd']}")
+
+    if not has_updates:
+        lines.append("")
+        lines.append("  All tools up to date.")
+
+    lines.append("")
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Monitoring cron setup helper
+# ---------------------------------------------------------------------------
+
+
+def create_monitoring_cron_prompt() -> str:
+    """Return a self-contained prompt for setting up a daily reach watch cron job.
+
+    This is designed to be used with `hermes cron create` or as guidance text
+    in the CLI output.
+    """
+    return (
+        "Run `hermes reach watch` to check all internet-reach capabilities. "
+        "If output contains failures (❌ ⚠️), include the full report. "
+        "If output is silent (all OK), do not notify — stay quiet. "
+        "If any capability is broken, suggest the first fix step from the report."
+    )
+
+
+def get_monitoring_cron_schedule() -> str:
+    """Default schedule for reach monitoring — daily at 8am."""
+    return "0 8 * * *"
+
+
+# ---------------------------------------------------------------------------
 # Convenience functions
 # ---------------------------------------------------------------------------
 
@@ -644,3 +993,7 @@ def get_installer(safe: bool = False, dry_run: bool = False) -> ReachInstaller:
 
 def get_configurator() -> ReachConfigurator:
     return ReachConfigurator()
+
+
+def get_uninstaller(dry_run: bool = False, keep_config: bool = False) -> ReachUninstaller:
+    return ReachUninstaller(dry_run=dry_run, keep_config=keep_config)

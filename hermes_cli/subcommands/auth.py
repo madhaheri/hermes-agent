@@ -106,4 +106,34 @@ def build_auth_parser(subparsers, *, cmd_auth: Callable) -> None:
     auth_spotify.add_argument(
         "--timeout", type=float, help="Callback/token exchange timeout in seconds"
     )
+
+    # browser-import (import cookies from browsers)
+    auth_browser = auth_subparsers.add_parser(
+        "browser-import",
+        help="Import cookies from local browsers (Chrome, Firefox, Safari, Edge)",
+        description=(
+            "Extract session cookies from your local browser and store them "
+            "as pooled credentials. This allows the agent to access platforms "
+            "where you are already logged in (Twitter, Reddit, Bilibili, etc.)."
+        ),
+    )
+    auth_browser.add_argument(
+        "browser",
+        choices=["chrome", "firefox", "safari", "edge", "opera", "brave", "chromium"],
+        help="Source browser to import from",
+    )
+    auth_browser.add_argument(
+        "domain",
+        nargs="?",
+        default=None,
+        help="Optional domain filter (e.g. twitter.com, reddit.com). Default: all supported.",
+    )
+    auth_browser.add_argument(
+        "--target",
+        choices=["reach", "global"],
+        default="reach",
+        help="Where to store the cookies. 'reach' (default) stores in reach-config; 'global' stores in auth pools.",
+    )
+    auth_browser.set_defaults(func=cmd_auth)
+
     auth_parser.set_defaults(func=cmd_auth)

@@ -44,7 +44,7 @@ class TestGetToolset:
 
         ts = get_toolset("web")
         assert ts is not None
-        assert set(ts["tools"]) == {"web_search", "web_extract", "web_search_plus"}
+        assert set(ts["tools"]) == {"web_search", "web_extract", "read_rss", "web_search_plus"}
 
     def test_unknown_returns_none(self):
         assert get_toolset("nonexistent") is None
@@ -53,7 +53,7 @@ class TestGetToolset:
 class TestResolveToolset:
     def test_leaf_toolset(self):
         tools = resolve_toolset("web")
-        assert set(tools) == {"web_search", "web_extract"}
+        assert set(tools) == {"web_search", "web_extract", "read_rss"}
 
     def test_composite_toolset(self):
         tools = resolve_toolset("debugging")

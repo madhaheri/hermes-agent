@@ -61,6 +61,15 @@ DEFAULT_X_SEARCH_TIMEOUT_SECONDS = 180
 DEFAULT_X_SEARCH_RETRIES = 2
 MAX_HANDLES = 10
 
+# Hint surfaced on every error path so callers know free alternatives exist
+# in the reach registry (twitter.search capability with xurl_cli / twitter_cli
+# backends). See issue #9.
+FALLBACK_HINT = (
+    "Free alternatives: xurl CLI (pipx install xurl, cookie-based) or "
+    "twitter-cli (pipx install twitter-cli). Run "
+    "`hermes reach doctor twitter.search` to see available backends."
+)
+
 
 # ---------------------------------------------------------------------------
 # Config
@@ -281,23 +290,26 @@ def x_search_tool(
     enable_video_understanding: bool = False,
 ) -> str:
     if not query or not query.strip():
-        return tool_error("query is required for x_search")
+        return tool_error("query is required for x_search", fallback_hint=FALLBACK_HINT)
 
     try:
         api_key, base_url, source = _resolve_xai_bearer()
     except RuntimeError as exc:
-        return tool_error(str(exc))
+        return tool_error(str(exc), fallback_hint=FALLBACK_HINT)
 
     try:
         allowed = _normalize_handles(allowed_x_handles, "allowed_x_handles")
         excluded = _normalize_handles(excluded_x_handles, "excluded_x_handles")
         if allowed and excluded:
-            return tool_error("allowed_x_handles and excluded_x_handles cannot be used together")
+            return tool_error(
+                "allowed_x_handles and excluded_x_handles cannot be used together",
+                fallback_hint=FALLBACK_HINT,
+            )
 
         try:
             _validate_date_range(from_date, to_date)
         except ValueError as exc:
-            return tool_error(str(exc))
+            return tool_error(str(exc), fallback_hint=FALLBACK_HINT)
 
         tool_def: Dict[str, Any] = {"type": "x_search"}
         if allowed:
@@ -423,6 +435,7 @@ def x_search_tool(
                 "tool": "x_search",
                 "error": _http_error_message(e),
                 "error_type": type(e).__name__,
+                "fallback_hint": FALLBACK_HINT,
             },
             ensure_ascii=False,
         )
@@ -435,6 +448,7 @@ def x_search_tool(
                 "tool": "x_search",
                 "error": f"xAI x_search timed out after {_get_x_search_timeout_seconds()} seconds",
                 "error_type": type(e).__name__,
+                "fallback_hint": FALLBACK_HINT,
             },
             ensure_ascii=False,
         )
@@ -447,6 +461,7 @@ def x_search_tool(
                 "tool": "x_search",
                 "error": str(e),
                 "error_type": type(e).__name__,
+                "fallback_hint": FALLBACK_HINT,
             },
             ensure_ascii=False,
         )

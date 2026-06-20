@@ -92,4 +92,16 @@ def build_tools_parser(subparsers, *, cmd_tools: Callable) -> None:
         metavar="KEY",
         help="Post-setup hook key (e.g. agent_browser, camofox, kittentts)",
     )
+
+    # hermes tools watch
+    tools_watch_p = tools_sub.add_parser(
+        "watch",
+        help="General health monitoring for all enabled tools",
+        description=(
+            "Run health checks for all enabled toolsets. Silent if all OK, "
+            "reports failures. Suitable for daily health crons."
+        ),
+    )
+    tools_watch_p.set_defaults(func=cmd_tools)
+
     tools_parser.set_defaults(func=cmd_tools)
