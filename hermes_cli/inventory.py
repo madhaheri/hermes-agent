@@ -211,12 +211,36 @@ def build_models_payload(
         _apply_pricing(rows, force_fresh_nous_tier=force_fresh_nous_tier)
     if capabilities:
         _apply_capabilities(rows)
+    _apply_provider_group_metadata(rows)
 
     return {
         "providers": rows,
         "model": ctx.current_model,
         "provider": ctx.current_provider,
     }
+
+
+def _apply_provider_group_metadata(rows: list[dict]) -> None:
+    """Attach display-only provider-family metadata to picker rows.
+
+    Interactive clients use this to collapse sibling providers (for example
+    ``ollama`` and ``ollama-cloud``) under one visual heading while preserving
+    the concrete provider slug used when a model is selected.
+    """
+    try:
+        from hermes_cli.models import PROVIDER_GROUPS, provider_group_for_slug
+    except Exception:
+        return
+
+    for row in rows:
+        slug = str(row.get("slug") or "")
+        gid = provider_group_for_slug(slug)
+        if not gid:
+            continue
+        label, desc, _members = PROVIDER_GROUPS.get(gid, (gid, "", []))
+        row["provider_group_id"] = gid
+        row["provider_group_label"] = label
+        row["provider_group_description"] = desc
 
 
 def _apply_capabilities(rows: list[dict]) -> None:

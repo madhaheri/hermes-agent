@@ -246,6 +246,9 @@ export interface ModelOptionProvider {
   is_current?: boolean
   models?: string[]
   name: string
+  provider_group_description?: string
+  provider_group_id?: string
+  provider_group_label?: string
   slug: string
   total_models?: number
   warning?: string

@@ -191,32 +191,39 @@ function ModelResults({
   // here. Switching to a NOT-yet-configured provider goes through the
   // "Add provider" footer button, which opens the full onboarding selector.
   const configured = providers.filter(p => (p.models ?? []).length > 0)
+  const sections = groupProviderSections(configured)
 
   return (
     <>
-      {configured.map(provider => {
+      {sections.map(section => {
         // Preserve the backend's curated order — filter in place, no re-sort.
-        const models = (provider.models ?? []).filter(m => matches(provider, m))
+        const rows = section.providers.flatMap(provider =>
+          (provider.models ?? [])
+            .filter(m => matches(provider, m))
+            .map(model => ({ provider, model }))
+        )
 
-        if (models.length === 0) {
+        if (rows.length === 0) {
           return null
         }
 
-        const unavailable = new Set(provider.unavailable_models ?? [])
+        const hasUnavailable = section.providers.some(provider => (provider.unavailable_models ?? []).length > 0)
 
         return (
-          <CommandGroup heading={<ProviderHeading provider={provider} />} key={provider.slug}>
-            {provider.warning && (
-              <div className="px-2 pb-2">
-                <InlineNotice className="px-2.5 py-1.5 text-xs" kind="warning">
-                  {provider.warning}
-                </InlineNotice>
-              </div>
+          <CommandGroup heading={<ProviderHeading section={section} />} key={section.id}>
+            {section.providers.map(provider =>
+              provider.warning ? (
+                <div className="px-2 pb-2" key={`${provider.slug}:warning`}>
+                  <InlineNotice className="px-2.5 py-1.5 text-xs" kind="warning">
+                    {provider.warning}
+                  </InlineNotice>
+                </div>
+              ) : null
             )}
-            {models.map(model => {
+            {rows.map(({ provider, model }) => {
               const isCurrent = model === currentModel && provider.slug === currentProvider
               const price = provider.pricing?.[model]
-              const locked = unavailable.has(model)
+              const locked = new Set(provider.unavailable_models ?? []).has(model)
 
               return (
                 <CommandItem
@@ -236,12 +243,17 @@ function ModelResults({
                   value={`${provider.slug}:${model}`}
                 >
                   <span className="min-w-0 flex-1 truncate">{model}</span>
+                  {section.providers.length > 1 && (
+                    <span className="shrink-0 text-[0.62rem] uppercase tracking-wide text-muted-foreground">
+                      {provider.name}
+                    </span>
+                  )}
                   {locked && <span className="shrink-0 text-[0.62rem] uppercase tracking-wide opacity-80">{copy.pro}</span>}
                   <ModelPrice isCurrent={isCurrent} price={price} />
                 </CommandItem>
               )
             })}
-            {unavailable.size > 0 && (
+            {hasUnavailable && (
               <div className="px-6 pb-2 pt-1 text-[0.62rem] leading-relaxed text-muted-foreground">
                 {copy.proNeedsSubscription}
               </div>
@@ -251,6 +263,37 @@ function ModelResults({
       })}
     </>
   )
+}
+
+interface ProviderSection {
+  description?: string
+  id: string
+  label: string
+  providers: ModelOptionProvider[]
+}
+
+function groupProviderSections(providers: ModelOptionProvider[]): ProviderSection[] {
+  const sections: ProviderSection[] = []
+  const byId = new Map<string, ProviderSection>()
+
+  for (const provider of providers) {
+    const groupId = provider.provider_group_id
+    const id = groupId ? `group:${groupId}` : `provider:${provider.slug}`
+    let section = byId.get(id)
+    if (!section) {
+      section = {
+        description: provider.provider_group_description,
+        id,
+        label: provider.provider_group_label || provider.name,
+        providers: []
+      }
+      byId.set(id, section)
+      sections.push(section)
+    }
+    section.providers.push(provider)
+  }
+
+  return sections
 }
 
 // Compact In/Out $/Mtok price tag, mirroring the CLI picker's price columns.
@@ -301,17 +344,20 @@ function LoadingResults() {
   )
 }
 
-function ProviderHeading({ provider }: { provider: ModelOptionProvider }) {
+function ProviderHeading({ section }: { section: ProviderSection }) {
   const { t } = useI18n()
   const copy = t.modelPicker
+  const primary = section.providers[0]
+  const totalModels = section.providers.reduce((sum, provider) => sum + (provider.total_models ?? provider.models?.length ?? 0), 0)
+  const slugs = section.providers.map(provider => provider.slug).join(' / ')
 
   // free_tier is only set for Nous. true → "Free tier", false → "Pro".
   const tierBadge =
-    provider.free_tier === true ? (
+    primary.free_tier === true ? (
       <span className="rounded-sm bg-emerald-500/15 px-1 py-0.5 text-[0.6rem] font-semibold uppercase tracking-wide text-emerald-600 dark:text-emerald-400">
         {copy.freeTier}
       </span>
-    ) : provider.free_tier === false ? (
+    ) : primary.free_tier === false ? (
       <span className="rounded-sm bg-primary/15 px-1 py-0.5 text-[0.6rem] font-semibold uppercase tracking-wide text-primary">
         {copy.pro}
       </span>
@@ -319,9 +365,9 @@ function ProviderHeading({ provider }: { provider: ModelOptionProvider }) {
 
   return (
     <span className="flex min-w-0 items-center gap-2">
-      <span className="truncate">{provider.name}</span>
+      <span className="truncate">{section.label}</span>
       <span className="font-mono text-xs font-normal normal-case tracking-normal text-muted-foreground">
-        {provider.slug} · {provider.total_models ?? provider.models?.length ?? 0}
+        {slugs} · {totalModels}
       </span>
       {tierBadge}
     </span>

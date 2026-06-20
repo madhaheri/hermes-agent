@@ -72,6 +72,16 @@ def test_multi_member_group_folds_to_one_row():
     assert row["description"]
 
 
+def test_ollama_local_and_cloud_fold_under_one_group():
+    rows = group_providers(["ollama-cloud", "ollama"])
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["kind"] == "group"
+    assert row["group_id"] == "ollama"
+    assert row["label"] == "Ollama"
+    assert row["members"] == ["ollama", "ollama-cloud"]
+
+
 def test_group_appears_at_first_member_position():
     """The group row takes the slot of its earliest-listed present member,
     and later members do not re-emit."""

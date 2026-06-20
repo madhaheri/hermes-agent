@@ -168,6 +168,25 @@ def test_build_models_payload_returns_expected_shape():
     assert payload["providers"] == rows
 
 
+def test_build_models_payload_adds_provider_group_metadata():
+    rows = [
+        {"slug": "ollama", "name": "Ollama (Local)", "models": ["llama3"],
+         "total_models": 1, "is_current": True, "is_user_defined": False,
+         "source": "canonical"},
+        {"slug": "ollama-cloud", "name": "Ollama Cloud", "models": ["gpt-oss:120b"],
+         "total_models": 1, "is_current": False, "is_user_defined": False,
+         "source": "canonical"},
+    ]
+    ctx = _empty_ctx(provider="ollama", model="llama3", base_url="")
+    with _list_auth_returning(rows):
+        payload = build_models_payload(ctx)
+
+    for row in payload["providers"]:
+        assert row["provider_group_id"] == "ollama"
+        assert row["provider_group_label"] == "Ollama"
+        assert row["provider_group_description"] == "Local server or Ollama Cloud"
+
+
 def test_build_models_payload_does_not_call_provider_model_ids():
     """``build_models_payload`` is a thin shape adapter — it delegates the
     actual curation to ``list_authenticated_providers`` (which DOES call
