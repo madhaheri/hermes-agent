@@ -314,3 +314,28 @@ class TestCompactedTurnsStaySearchable:
             )
             assert len(recovered) == 1
 
+    def test_restore_rewound_does_not_reactivate_compaction_archive(self):
+        """Undo-of-rewind restoration must not resurrect compacted originals.
+
+        Compacted rows are inactive for live-context purposes, but they are not
+        "rewound" rows. restore_rewound() should only flip active=0,compacted=0
+        rows back to active=1.
+        """
+        from hermes_state import SessionDB
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db = SessionDB(db_path=Path(tmp) / "t.db")
+            sid = "20260619_restore"
+            db.create_session(sid, "cli", model="test/model")
+            db.append_message(session_id=sid, role="user", content="old user")
+            db.append_message(session_id=sid, role="assistant", content="old assistant")
+
+            db.archive_and_compact(
+                sid,
+                [{"role": "user", "content": "[SUMMARY] old exchange"}],
+            )
+
+            assert [m["content"] for m in db.get_messages(sid)] == ["[SUMMARY] old exchange"]
+            assert db.restore_rewound(sid, 1) == 0
+            assert [m["content"] for m in db.get_messages(sid)] == ["[SUMMARY] old exchange"]
+

@@ -32,7 +32,13 @@ COPILOT_REASONING_EFFORTS_O_SERIES = ["low", "medium", "high"]
 
 # Fallback OpenRouter snapshot used when the live catalog is unavailable.
 # (model_id, display description shown in menus)
+OPENROUTER_FUSION_PROFILE_MODELS: list[tuple[str, str]] = [
+    ("fusion-budget", "OpenRouter Fusion: Gemini Flash + Kimi + DeepSeek, judged by Claude Opus"),
+    ("fusion-frontier", "OpenRouter Fusion: Claude Opus + GPT-5.5 + Gemini Pro, judged by Claude Opus"),
+]
+
 OPENROUTER_MODELS: list[tuple[str, str]] = [
+    *OPENROUTER_FUSION_PROFILE_MODELS,
     # Anthropic
     ("anthropic/claude-opus-4.8",              ""),
     ("anthropic/claude-opus-4.8-fast",         "2x price, higher output speed"),
@@ -74,6 +80,7 @@ OPENROUTER_MODELS: list[tuple[str, str]] = [
     # OpenRouter routers
     ("openrouter/pareto-code",                 "auto-routes to cheapest coder meeting openrouter.min_coding_score"),
     # Free tier
+    ("openrouter/free",                      "free"),
     ("openrouter/elephant-alpha",              "free"),
     ("openrouter/owl-alpha",                   "free"),
     ("poolside/laguna-m.1:free",               "free"),
@@ -1039,6 +1046,7 @@ CANONICAL_PROVIDERS: list[ProviderEntry] = [
     ProviderEntry("minimax-oauth",  "MiniMax (OAuth)",          "MiniMax via OAuth browser login (Coding Plan, minimax.io)"),
     ProviderEntry("minimax-cn",     "MiniMax (China)",          "MiniMax China (Domestic direct API)"),
     ProviderEntry("ollama-cloud",   "Ollama Cloud",             "Ollama Cloud (Cloud-hosted open models, ollama.com)"),
+    ProviderEntry("ollama",         "Ollama (Local)",           "Ollama local server (localhost:11434, models via ollama pull)"),
     ProviderEntry("arcee",          "Arcee AI",                 "Arcee AI (Trinity models, direct API)"),
     ProviderEntry("gmi",            "GMI Cloud",                "GMI Cloud (Multi-model direct API)"),
     ProviderEntry("kilocode",       "Kilo Code",                "Kilo Code (Kilo Gateway API)"),
@@ -1251,7 +1259,7 @@ _PROVIDER_ALIASES = {
     "lmstudio": "lmstudio",
     "lm-studio": "lmstudio",
     "lm_studio": "lmstudio",
-    "ollama": "custom",  # bare "ollama" = local; use "ollama-cloud" for cloud
+    "ollama": "ollama",  # bare "ollama" = local; use "ollama-cloud" for cloud
     "ollama_cloud": "ollama-cloud",
 }
 
@@ -1355,7 +1363,16 @@ def fetch_openrouter_models(
     except Exception:
         remote = None
     fallback = list(remote) if remote else list(OPENROUTER_MODELS)
+    # Local virtual Fusion profiles are Hermes aliases for OpenRouter's
+    # `openrouter/fusion` router with custom plugin payloads. They will never
+    # appear in OpenRouter's /v1/models catalog, so keep them in the picker
+    # independent of live-catalog filtering.
+    fusion_profiles = list(OPENROUTER_FUSION_PROFILE_MODELS)
+    for profile_id, desc in reversed(fusion_profiles):
+        if not any(mid == profile_id for mid, _ in fallback):
+            fallback.insert(0, (profile_id, desc))
     preferred_ids = [mid for mid, _ in fallback]
+    fusion_desc_by_id = dict(fusion_profiles)
 
     try:
         req = urllib.request.Request(
@@ -1381,7 +1398,12 @@ def fetch_openrouter_models(
         live_by_id[mid] = item
 
     curated: list[tuple[str, str]] = []
+    curated_ids: set[str] = set()
     for preferred_id in preferred_ids:
+        if preferred_id in fusion_desc_by_id:
+            curated.append((preferred_id, fusion_desc_by_id[preferred_id]))
+            curated_ids.add(preferred_id)
+            continue
         live_item = live_by_id.get(preferred_id)
         if live_item is None:
             continue
@@ -1392,12 +1414,25 @@ def fetch_openrouter_models(
             continue
         desc = "free" if _openrouter_model_is_free(live_item.get("pricing")) else ""
         curated.append((preferred_id, desc))
+        curated_ids.add(preferred_id)
+
+    # Append ALL remaining live models that support tools but aren't in the
+    # curated list — gives users the full OpenRouter catalog in the picker.
+    for mid, live_item in live_by_id.items():
+        if mid in curated_ids:
+            continue
+        if not _openrouter_model_supports_tools(live_item):
+            continue
+        desc = "free" if _openrouter_model_is_free(live_item.get("pricing")) else ""
+        curated.append((mid, desc))
 
     if not curated:
         return list(_openrouter_catalog_cache or fallback)
 
-    first_id, _ = curated[0]
-    curated[0] = (first_id, "recommended")
+    for idx, (mid, desc) in enumerate(curated):
+        if mid not in fusion_desc_by_id:
+            curated[idx] = (mid, "recommended")
+            break
     _openrouter_catalog_cache = curated
     return list(curated)
 
@@ -2295,6 +2330,12 @@ def provider_model_ids(provider: Optional[str], *, force_refresh: bool = False) 
         live = fetch_ollama_cloud_models(force_refresh=force_refresh)
         if live:
             return live
+    if normalized == "ollama":
+        # Local Ollama — probe the native /api/tags endpoint.
+        # Only returns models with actual weights on disk (no :cloud entries).
+        local = fetch_local_ollama_models()
+        if local:
+            return local
     if normalized in ("openai", "openai-api"):
         api_key = os.getenv("OPENAI_API_KEY", "").strip()
         if api_key:
@@ -3530,6 +3571,43 @@ def _save_ollama_cloud_cache(models: list[str]) -> None:
         atomic_json_write(cache_path, {"models": models, "cached_at": time.time()}, indent=None)
     except Exception:
         pass
+
+
+def fetch_local_ollama_models(
+    base_url: Optional[str] = None,
+    timeout: float = 2.0,
+) -> list[str]:
+    """Fetch locally-installed Ollama models from the native ``/api/tags`` endpoint.
+
+    Returns a list of model names (e.g. ``gemma4:12b``) with no ``:cloud`` suffix
+    entries (those belong to Ollama Cloud).  Returns an empty list on network
+    errors or when Ollama is not running.
+    """
+    if not base_url:
+        base_url = (
+            os.getenv("OLLAMA_LOCAL_BASE_URL", "")
+            or os.getenv("OLLAMA_BASE_URL", "")
+            or "http://localhost:11434"
+        )
+    base_url = base_url.rstrip("/")
+    if base_url.endswith("/v1"):
+        # Provider/runtime config uses the OpenAI-compatible endpoint
+        # (http://host:11434/v1), but native model discovery lives at
+        # http://host:11434/api/tags.
+        base_url = base_url[:-3].rstrip("/")
+    try:
+        import urllib.request
+        req = urllib.request.Request(f"{base_url}/api/tags")
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            data = json.load(r)
+    except Exception:
+        return []
+    models: list[str] = []
+    for entry in data.get("models", []):
+        name = (entry.get("name") or entry.get("model") or "").strip()
+        if name and ":cloud" not in name and name not in models:
+            models.append(name)
+    return models
 
 
 def fetch_ollama_cloud_models(

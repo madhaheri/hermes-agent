@@ -28,6 +28,27 @@ _ANTHROPIC_REASONING_OPTIONAL_SUBSTRINGS = (
     "claude-haiku-4-5", "claude-haiku-4.5",
 )
 
+_FUSION_PROFILES: dict[str, dict[str, Any]] = {
+    "fusion-budget": {
+        "analysis_models": [
+            "google/gemini-3-flash-preview",
+            "moonshotai/kimi-k2.6",
+            "deepseek/deepseek-v4-pro",
+        ],
+        "model": "anthropic/claude-opus-4.8",
+        "max_tool_calls": 8,
+    },
+    "fusion-frontier": {
+        "analysis_models": [
+            "anthropic/claude-opus-4.8",
+            "openai/gpt-5.5",
+            "google/gemini-3.1-pro-preview",
+        ],
+        "model": "anthropic/claude-opus-4.8",
+        "max_tool_calls": 8,
+    },
+}
+
 
 def _anthropic_reasoning_is_mandatory(model: str | None) -> bool:
     """Return True for Anthropic models that reject any disable-thinking form.
@@ -99,6 +120,15 @@ class OpenRouterProfile(ProviderProfile):
                     body["plugins"] = [
                         {"id": "pareto-router", "min_coding_score": score_f}
                     ]
+        fusion_profile = _FUSION_PROFILES.get(model)
+        if fusion_profile:
+            # These Hermes-visible model IDs are virtual convenience profiles.
+            # The real OpenRouter router is `openrouter/fusion`; the plugin
+            # block supplies the user's fixed panel and judge. Do not force
+            # `tool_choice: required` here because Hermes also sends its own
+            # tool schemas; forcing any tool could make the model pick a Hermes
+            # function instead of the Fusion server tool.
+            body["plugins"] = [{"id": "fusion", **fusion_profile}]
         return body
 
     def build_api_kwargs_extras(
@@ -163,6 +193,12 @@ class OpenRouterProfile(ProviderProfile):
             extra_headers["x-grok-conv-id"] = session_id
         if extra_headers:
             top_level["extra_headers"] = extra_headers
+
+        if model in _FUSION_PROFILES:
+            # Replace the Hermes-facing virtual alias with OpenRouter's router
+            # slug at the wire boundary while keeping the selected model name
+            # stable in config, /model, and the UI.
+            top_level["model"] = "openrouter/fusion"
 
         return extra_body, top_level
 

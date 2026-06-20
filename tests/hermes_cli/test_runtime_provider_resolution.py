@@ -2491,16 +2491,16 @@ def test_minimax_oauth_pool_forces_anthropic_messages_despite_stale_config(monke
 
 
 @pytest.mark.parametrize(
-    "alias,base_url",
+    "alias,base_url,expected_provider",
     [
-        ("ollama", "http://192.168.0.103:11434/v1"),
-        ("vllm", "http://192.168.0.103:8000/v1"),
-        ("llamacpp", "http://192.168.0.103:8080/v1"),
-        ("llama-cpp", "http://192.168.0.103:8080/v1"),
+        ("ollama", "http://192.168.0.103:11434/v1", "custom"),
+        ("vllm", "http://192.168.0.103:8000/v1", "custom"),
+        ("llamacpp", "http://192.168.0.103:8080/v1", "custom"),
+        ("llama-cpp", "http://192.168.0.103:8080/v1", "custom"),
     ],
 )
 def test_custom_aliases_with_lan_base_url_route_to_custom_not_openrouter(
-    monkeypatch, alias, base_url
+    monkeypatch, alias, base_url, expected_provider
 ):
     """provider: ollama|vllm|llamacpp + LAN IP must NOT fall through to OpenRouter."""
     monkeypatch.setattr(
@@ -2511,14 +2511,14 @@ def test_custom_aliases_with_lan_base_url_route_to_custom_not_openrouter(
     # Pretend OPENROUTER_API_KEY is set so the openrouter fallback would
     # otherwise succeed — we want to prove the alias short-circuits before
     # reaching it.
-    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-fake-test")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "***")
     # No custom credential pool — exercise the bare-alias path.
     monkeypatch.setattr(rp, "load_pool", lambda provider: None)
 
     resolved = rp.resolve_runtime_provider()
 
-    assert resolved["provider"] == "custom", (
-        f"alias {alias!r} with LAN base_url should resolve to provider=custom, "
+    assert resolved["provider"] == expected_provider, (
+        f"alias {alias!r} with LAN base_url should resolve to provider={expected_provider}, "
         f"got {resolved['provider']!r}"
     )
     assert resolved["base_url"] == base_url.rstrip("/"), (
@@ -2533,7 +2533,7 @@ def test_custom_alias_with_loopback_base_url_routes_to_custom(monkeypatch):
         "_get_model_config",
         lambda: {"provider": "ollama", "base_url": "http://localhost:11434/v1"},
     )
-    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-fake-test")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "***")
     monkeypatch.setattr(rp, "load_pool", lambda provider: None)
 
     resolved = rp.resolve_runtime_provider()

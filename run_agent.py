@@ -3969,6 +3969,14 @@ class AIAgent:
             self._client_kwargs["default_headers"] = copilot_default_headers()
         elif base_url_host_matches(base_url, "api.kimi.com"):
             self._client_kwargs["default_headers"] = {"User-Agent": "claude-code/0.1.0"}
+        elif base_url_host_matches(base_url, "routellm.abacus.ai"):
+            self._client_kwargs["default_headers"] = {
+                "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+                "Accept": "application/json",
+                "Accept-Language": "en-US,en;q=0.9",
+                "Origin": "https://routellm.abacus.ai",
+                "Referer": "https://routellm.abacus.ai/",
+            }
         elif base_url_host_matches(base_url, "portal.qwen.ai"):
             self._client_kwargs["default_headers"] = _qwen_portal_headers()
         elif base_url_host_matches(base_url, "chatgpt.com"):

@@ -24,7 +24,9 @@ HEADERS = {"X-Hermes-Session-Token": _SESSION_TOKEN}
 # the model picker's local-endpoint flow, not a fixed credential card. It is in
 # the CLI picker's universe but intentionally has no dedicated Providers-tab
 # card. Exempt it from the union check.
-_EXEMPT = {"custom"}
+# `ollama` (local) has no API key or auth — it's always localhost:11434 with no
+# credentials, so it has no Providers-tab card either.
+_EXEMPT = {"custom", "ollama"}
 
 # Providers that legitimately offer BOTH auth methods and so intentionally
 # appear on both desktop tabs (an API-key card AND an account sign-in card).

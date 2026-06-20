@@ -2316,6 +2316,7 @@ def _model_flow_api_key_provider(config, provider_id, current_model=""):
     from hermes_cli.models import (
         _PROVIDER_MODELS,
         fetch_api_models,
+        fetch_local_ollama_models,
         opencode_model_api_mode,
         normalize_opencode_model_id,
     )
@@ -2331,11 +2332,18 @@ def _model_flow_api_key_provider(config, provider_id, current_model=""):
         if existing_key:
             break
 
-    existing_key, abort = _prompt_api_key(
-        pconfig, existing_key, provider_id=provider_id
-    )
-    if abort:
-        return
+    if pconfig.auth_type == "none":
+        # Local/no-auth providers (currently Ollama) must not enter the generic
+        # API-key prompt: they intentionally have no key env var, and
+        # _prompt_api_key treats an empty env var as "abort". Continue directly
+        # to endpoint + model selection instead.
+        existing_key = ""
+    else:
+        existing_key, abort = _prompt_api_key(
+            pconfig, existing_key, provider_id=provider_id
+        )
+        if abort:
+            return
 
     # Gemini free-tier gate: free-tier daily quotas (<= 250 RPD for Flash)
     # are exhausted in a handful of agent turns, so refuse to wire up the
@@ -2448,6 +2456,10 @@ def _model_flow_api_key_provider(config, provider_id, current_model=""):
             model_list = []
         if model_list:
             print(f"  Found {len(model_list)} model(s) from LM Studio")
+    elif provider_id == "ollama":
+        model_list = fetch_local_ollama_models(base_url=effective_base)
+        if model_list:
+            print(f"  Found {len(model_list)} local Ollama model(s)")
     elif provider_id == "ollama-cloud":
         from hermes_cli.models import fetch_ollama_cloud_models
 

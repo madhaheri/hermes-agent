@@ -3293,7 +3293,7 @@ class SessionDB:
         def _do(conn):
             cursor = conn.execute(
                 "SELECT id FROM messages "
-                "WHERE session_id = ? AND id >= ? AND active = 0",
+                "WHERE session_id = ? AND id >= ? AND active = 0 AND compacted = 0",
                 (session_id, since_message_id),
             )
             ids = [r[0] for r in cursor.fetchall()]

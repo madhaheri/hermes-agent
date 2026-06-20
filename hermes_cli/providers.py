@@ -201,6 +201,12 @@ HERMES_OVERLAYS: Dict[str, HermesOverlay] = {
         base_url_override="https://ollama.com/v1",
         base_url_env_var="OLLAMA_BASE_URL",
     ),
+    "ollama": HermesOverlay(
+        transport="openai_chat",
+        auth_type="none",
+        base_url_override="http://localhost:11434/v1",
+        base_url_env_var="OLLAMA_LOCAL_BASE_URL",
+    ),
     # Azure Foundry: supports both OpenAI-style and Anthropic-style endpoints.
     # The transport is determined at runtime from config.yaml model.api_mode.
     "azure-foundry": HermesOverlay(
@@ -352,7 +358,7 @@ ALIASES: Dict[str, str] = {
     "lmstudio": "lmstudio",
     "lm-studio": "lmstudio",
     "lm_studio": "lmstudio",
-    "ollama": "custom",  # bare "ollama" = local; use "ollama-cloud" for cloud
+    "ollama": "ollama",  # bare "ollama" = local; use "ollama-cloud" for cloud
     "vllm": "local",
     "llamacpp": "local",
     "llama.cpp": "local",
@@ -373,6 +379,7 @@ _LABEL_OVERRIDES: Dict[str, str] = {
     "gmi": "GMI Cloud",
     "tencent-tokenhub": "Tencent TokenHub",
     "lmstudio": "LM Studio",
+    "ollama": "Ollama (Local)",
     "local": "Local endpoint",
     "bedrock": "AWS Bedrock",
     "ollama-cloud": "Ollama Cloud",

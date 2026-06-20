@@ -9,6 +9,7 @@ from hermes_cli.models import (
     check_nous_free_tier, _FREE_TIER_CACHE_TTL,
     union_with_portal_free_recommendations,
     union_with_portal_paid_recommendations,
+    fetch_local_ollama_models,
 )
 import hermes_cli.models as _models_mod
 
@@ -74,10 +75,14 @@ class TestFetchOpenRouterModels:
             models = fetch_openrouter_models(force_refresh=True)
 
         assert models == [
+            ("fusion-budget", "OpenRouter Fusion: Gemini Flash + Kimi + DeepSeek, judged by Claude Opus"),
+            ("fusion-frontier", "OpenRouter Fusion: Claude Opus + GPT-5.5 + Gemini Pro, judged by Claude Opus"),
             ("anthropic/claude-opus-4.8", "recommended"),
             ("qwen/qwen3.7-max", ""),
             ("nvidia/nemotron-3-super-120b-a12b:free", "free"),
         ]
+        assert ("fusion-budget", "OpenRouter Fusion: Gemini Flash + Kimi + DeepSeek, judged by Claude Opus") in models
+        assert ("fusion-frontier", "OpenRouter Fusion: Claude Opus + GPT-5.5 + Gemini Pro, judged by Claude Opus") in models
 
     def test_falls_back_to_static_snapshot_on_fetch_failure(self, monkeypatch):
         monkeypatch.setattr(_models_mod, "_openrouter_catalog_cache", None)
@@ -210,6 +215,44 @@ class TestOpenRouterToolSupportHelper:
         assert _openrouter_model_supports_tools(
             {"id": "x", "supported_parameters": []}
         ) is False
+
+
+class TestFetchLocalOllamaModels:
+    class _Resp:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self):
+            return b'{"models":[{"name":"gemma4:12b"}]}'
+
+    def test_uses_local_base_url_env_var_before_cloud_env(self, monkeypatch):
+        calls = []
+
+        def _fake_urlopen(req, timeout=None):
+            calls.append(req.full_url)
+            return self._Resp()
+
+        monkeypatch.setenv("OLLAMA_LOCAL_BASE_URL", "http://lan-ollama:11434")
+        monkeypatch.setenv("OLLAMA_BASE_URL", "https://ollama.com")
+        monkeypatch.setattr(_models_mod.urllib.request, "urlopen", _fake_urlopen)
+
+        assert fetch_local_ollama_models() == ["gemma4:12b"]
+        assert calls == ["http://lan-ollama:11434/api/tags"]
+
+    def test_strips_openai_compatible_v1_suffix_for_native_tags_endpoint(self, monkeypatch):
+        calls = []
+
+        def _fake_urlopen(req, timeout=None):
+            calls.append(req.full_url)
+            return self._Resp()
+
+        monkeypatch.setattr(_models_mod.urllib.request, "urlopen", _fake_urlopen)
+
+        assert fetch_local_ollama_models(base_url="http://localhost:11434/v1") == ["gemma4:12b"]
+        assert calls == ["http://localhost:11434/api/tags"]
 
 
 class TestFindOpenrouterSlug:

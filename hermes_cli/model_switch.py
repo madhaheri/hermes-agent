@@ -1391,6 +1391,15 @@ def list_authenticated_providers(
     if "ollama-cloud" not in curated:
         from hermes_cli.models import fetch_ollama_cloud_models
         curated["ollama-cloud"] = fetch_ollama_cloud_models()
+
+    # Local Ollama: probe the native /api/tags endpoint so locally-installed
+    # models appear in the picker.  Uses a short timeout so the picker stays
+    # snappy when Ollama isn't running.
+    if "ollama" not in curated:
+        from hermes_cli.models import fetch_local_ollama_models
+        local_ollama = fetch_local_ollama_models()
+        if local_ollama:
+            curated["ollama"] = local_ollama
     # LM Studio has no static catalog — probe its native /api/v1/models
     # endpoint live so the picker reflects whatever the user has loaded.
     # Base URL precedence: LM_BASE_URL env var > active config's base_url
@@ -1706,6 +1715,11 @@ def list_authenticated_providers(
         # ~/.aws/credentials, instance roles, etc.)
         if not _cp_has_creds and _cp_config and getattr(_cp_config, "auth_type", "") == "aws_sdk":
             _cp_has_creds = _has_aws_sdk_creds_for_listing(_cp.slug)
+
+        # Special case: auth_type="none" (local Ollama) — no credentials
+        # needed, always show in picker if the curated list has models.
+        if not _cp_has_creds and _cp_config and getattr(_cp_config, "auth_type", "") == "none":
+            _cp_has_creds = True
 
         if not _cp_has_creds:
             continue
