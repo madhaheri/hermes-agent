@@ -3725,6 +3725,20 @@ def validate_requested_model(
             "message": "Model names cannot contain spaces.",
         }
 
+    # OpenRouter Fusion virtual profiles (fusion-budget, fusion-frontier) are
+    # Hermes-side aliases that map to ``openrouter/fusion`` + a plugins block.
+    # They will never appear in OpenRouter's /v1/models listing, so accept
+    # them early before the generic live-probe path rejects them.
+    if normalized == "openrouter":
+        _fusion_ids = {mid.lower() for mid, _ in OPENROUTER_FUSION_PROFILE_MODELS}
+        if requested.lower() in _fusion_ids:
+            return {
+                "accepted": True,
+                "persist": True,
+                "recognized": True,
+                "message": None,
+            }
+
     if normalized == "lmstudio":
         from hermes_cli.auth import AuthError
         # Use probe_lmstudio_models so we can distinguish None (unreachable

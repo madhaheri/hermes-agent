@@ -58,6 +58,38 @@ class TestOpenRouterModels:
             assert isinstance(desc, str)
 
 
+class TestFusionProfileValidation:
+    """Fusion virtual profiles must pass validation without a live API probe.
+
+    ``fusion-budget`` and ``fusion-frontier`` are Hermes-side aliases that map
+    to ``openrouter/fusion`` + a plugins block at the wire boundary. They will
+    never appear in OpenRouter's ``/v1/models`` listing, so
+    ``validate_requested_model`` must accept them early before the generic
+    live-probe path rejects them (#fix-fusion-picker).
+    """
+
+    def test_validate_accepts_fusion_budget(self):
+        from hermes_cli.models import validate_requested_model
+        result = validate_requested_model("fusion-budget", "openrouter")
+        assert result["accepted"] is True
+        assert result["persist"] is True
+        assert result["recognized"] is True
+
+    def test_validate_accepts_fusion_frontier(self):
+        from hermes_cli.models import validate_requested_model
+        result = validate_requested_model("fusion-frontier", "openrouter")
+        assert result["accepted"] is True
+        assert result["persist"] is True
+        assert result["recognized"] is True
+
+    def test_validate_rejects_unknown_fusion_variant(self):
+        from hermes_cli.models import validate_requested_model
+        # Mock the live API to return a known list without "fusion-nonexistent"
+        with patch("hermes_cli.models.fetch_api_models", return_value=["anthropic/claude-opus-4.8"]):
+            result = validate_requested_model("fusion-nonexistent", "openrouter")
+        assert result["accepted"] is False
+
+
 class TestFetchOpenRouterModels:
     def test_live_fetch_recomputes_free_tags(self, monkeypatch):
         class _Resp:
