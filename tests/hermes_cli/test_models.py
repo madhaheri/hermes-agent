@@ -58,33 +58,23 @@ class TestOpenRouterModels:
             assert isinstance(desc, str)
 
 
-class TestFusionProfileValidation:
-    """Fusion virtual profiles must pass validation without a live API probe.
+class TestCustomModelValidation:
+    """Config-driven custom models must pass validation without a live API probe."""
 
-    ``fusion-budget`` and ``fusion-frontier`` are Hermes-side aliases that map
-    to ``openrouter/fusion`` + a plugins block at the wire boundary. They will
-    never appear in OpenRouter's ``/v1/models`` listing, so
-    ``validate_requested_model`` must accept them early before the generic
-    live-probe path rejects them (#fix-fusion-picker).
-    """
-
-    def test_validate_accepts_fusion_budget(self):
+    def test_validate_accepts_custom_model(self, monkeypatch):
         from hermes_cli.models import validate_requested_model
-        result = validate_requested_model("fusion-budget", "openrouter")
+
+        monkeypatch.setattr("hermes_cli.models._load_custom_models_config",
+            lambda: {"my-custom-model": {"provider": "openrouter", "wire_model": "openrouter/fusion"}})
+        result = validate_requested_model("my-custom-model", "openrouter-fusion")
         assert result["accepted"] is True
         assert result["persist"] is True
         assert result["recognized"] is True
 
-    def test_validate_accepts_fusion_frontier(self):
+    def test_validate_rejects_unknown_when_no_custom_models(self, monkeypatch):
         from hermes_cli.models import validate_requested_model
-        result = validate_requested_model("fusion-frontier", "openrouter")
-        assert result["accepted"] is True
-        assert result["persist"] is True
-        assert result["recognized"] is True
 
-    def test_validate_rejects_unknown_fusion_variant(self):
-        from hermes_cli.models import validate_requested_model
-        # Mock the live API to return a known list without "fusion-nonexistent"
+        monkeypatch.setattr("hermes_cli.models._load_custom_models_config", lambda: {})
         with patch("hermes_cli.models.fetch_api_models", return_value=["anthropic/claude-opus-4.8"]):
             result = validate_requested_model("fusion-nonexistent", "openrouter")
         assert result["accepted"] is False
@@ -107,14 +97,10 @@ class TestFetchOpenRouterModels:
             models = fetch_openrouter_models(force_refresh=True)
 
         assert models == [
-            ("fusion-budget", "OpenRouter Fusion: Gemini Flash + Kimi + DeepSeek, judged by Claude Opus"),
-            ("fusion-frontier", "OpenRouter Fusion: Claude Opus + GPT-5.5 + Gemini Pro, judged by Claude Opus"),
             ("anthropic/claude-opus-4.8", "recommended"),
             ("qwen/qwen3.7-max", ""),
             ("nvidia/nemotron-3-super-120b-a12b:free", "free"),
         ]
-        assert ("fusion-budget", "OpenRouter Fusion: Gemini Flash + Kimi + DeepSeek, judged by Claude Opus") in models
-        assert ("fusion-frontier", "OpenRouter Fusion: Claude Opus + GPT-5.5 + Gemini Pro, judged by Claude Opus") in models
 
     def test_falls_back_to_static_snapshot_on_fetch_failure(self, monkeypatch):
         monkeypatch.setattr(_models_mod, "_openrouter_catalog_cache", None)

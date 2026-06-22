@@ -236,48 +236,6 @@ class TestChatCompletionsBuildKwargs:
             {"id": "pareto-router", "min_coding_score": 0.8}
         ]
 
-    @pytest.mark.parametrize(
-        ("alias", "analysis_models"),
-        [
-            (
-                "fusion-budget",
-                [
-                    "google/gemini-3-flash-preview",
-                    "moonshotai/kimi-k2.6",
-                    "deepseek/deepseek-v4-pro",
-                ],
-            ),
-            (
-                "fusion-frontier",
-                [
-                    "anthropic/claude-opus-4.8",
-                    "openai/gpt-5.5",
-                    "google/gemini-3.1-pro-preview",
-                ],
-            ),
-        ],
-    )
-    def test_openrouter_fusion_virtual_profiles(self, transport, alias, analysis_models):
-        """Fusion aliases should select the real Fusion router plus custom panel."""
-        from providers import get_provider_profile
-        profile = get_provider_profile("openrouter")
-        msgs = [{"role": "user", "content": "Hi"}]
-        kw = transport.build_kwargs(
-            model=alias,
-            messages=msgs,
-            tools=[{"type": "function", "function": {"name": "test", "parameters": {}}}],
-            provider_profile=profile,
-        )
-        assert kw["model"] == "openrouter/fusion"
-        plugin = kw["extra_body"]["plugins"][0]
-        assert plugin["id"] == "fusion"
-        assert plugin["analysis_models"] == analysis_models
-        assert plugin["model"] == "anthropic/claude-opus-4.8"
-        assert plugin["max_tool_calls"] == 8
-        assert "tool_choice" not in kw
-        # Hermes tools remain available; forcing tool_choice would conflict with them.
-        assert kw["tools"][0]["function"]["name"] == "test"
-
     def test_nous_tags(self, transport):
         from agent.portal_tags import nous_portal_tags
         from providers import get_provider_profile

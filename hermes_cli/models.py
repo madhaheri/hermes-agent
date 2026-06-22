@@ -32,13 +32,7 @@ COPILOT_REASONING_EFFORTS_O_SERIES = ["low", "medium", "high"]
 
 # Fallback OpenRouter snapshot used when the live catalog is unavailable.
 # (model_id, display description shown in menus)
-OPENROUTER_FUSION_PROFILE_MODELS: list[tuple[str, str]] = [
-    ("fusion-budget", "OpenRouter Fusion: Gemini Flash + Kimi + DeepSeek, judged by Claude Opus"),
-    ("fusion-frontier", "OpenRouter Fusion: Claude Opus + GPT-5.5 + Gemini Pro, judged by Claude Opus"),
-]
-
 OPENROUTER_MODELS: list[tuple[str, str]] = [
-    *OPENROUTER_FUSION_PROFILE_MODELS,
     # Anthropic
     ("anthropic/claude-opus-4.8",              ""),
     ("anthropic/claude-opus-4.8-fast",         "2x price, higher output speed"),
@@ -1364,16 +1358,7 @@ def fetch_openrouter_models(
     except Exception:
         remote = None
     fallback = list(remote) if remote else list(OPENROUTER_MODELS)
-    # Local virtual Fusion profiles are Hermes aliases for OpenRouter's
-    # `openrouter/fusion` router with custom plugin payloads. They will never
-    # appear in OpenRouter's /v1/models catalog, so keep them in the picker
-    # independent of live-catalog filtering.
-    fusion_profiles = list(OPENROUTER_FUSION_PROFILE_MODELS)
-    for profile_id, desc in reversed(fusion_profiles):
-        if not any(mid == profile_id for mid, _ in fallback):
-            fallback.insert(0, (profile_id, desc))
     preferred_ids = [mid for mid, _ in fallback]
-    fusion_desc_by_id = dict(fusion_profiles)
 
     try:
         req = urllib.request.Request(
@@ -1399,12 +1384,7 @@ def fetch_openrouter_models(
         live_by_id[mid] = item
 
     curated: list[tuple[str, str]] = []
-    curated_ids: set[str] = set()
     for preferred_id in preferred_ids:
-        if preferred_id in fusion_desc_by_id:
-            curated.append((preferred_id, fusion_desc_by_id[preferred_id]))
-            curated_ids.add(preferred_id)
-            continue
         live_item = live_by_id.get(preferred_id)
         if live_item is None:
             continue
@@ -1415,25 +1395,12 @@ def fetch_openrouter_models(
             continue
         desc = "free" if _openrouter_model_is_free(live_item.get("pricing")) else ""
         curated.append((preferred_id, desc))
-        curated_ids.add(preferred_id)
-
-    # Append ALL remaining live models that support tools but aren't in the
-    # curated list — gives users the full OpenRouter catalog in the picker.
-    for mid, live_item in live_by_id.items():
-        if mid in curated_ids:
-            continue
-        if not _openrouter_model_supports_tools(live_item):
-            continue
-        desc = "free" if _openrouter_model_is_free(live_item.get("pricing")) else ""
-        curated.append((mid, desc))
 
     if not curated:
         return list(_openrouter_catalog_cache or fallback)
 
-    for idx, (mid, desc) in enumerate(curated):
-        if mid not in fusion_desc_by_id:
-            curated[idx] = (mid, "recommended")
-            break
+    first_id, _ = curated[0]
+    curated[0] = (first_id, "recommended")
     _openrouter_catalog_cache = curated
     return list(curated)
 
@@ -3678,6 +3645,45 @@ def fetch_ollama_cloud_models(
     return []
 
 
+# ---------------------------------------------------------------------------
+# Custom models (config-driven, user-space)
+# ---------------------------------------------------------------------------
+# Reads ``custom_models`` from config.yaml so user-defined virtual model IDs
+# (e.g. OpenRouter Fusion profiles) pass validation without a live API probe.
+# This is an additive helper — upstream code never references it, so it won't
+# conflict on updates.
+
+
+def _load_custom_models_config() -> dict[str, Any]:
+    """Return the ``custom_models`` mapping from config.yaml, or {}."""
+    try:
+        from hermes_cli.config import load_config
+
+        cfg = load_config()
+        cm = cfg.get("custom_models")
+        if isinstance(cm, dict):
+            return cm
+    except Exception:
+        pass
+    return {}
+
+
+def _is_custom_model(model_name: str, provider: Optional[str] = None) -> bool:
+    """Return True when *model_name* is declared in ``custom_models`` config.
+
+    The *provider* argument is accepted for call-site compatibility but does
+    not restrict the check — custom models are virtual IDs that never appear
+    in any live catalog, so any provider serving them needs the early accept.
+    The model picker only surfaces them under their declared provider section,
+    so there is no risk of accepting on an unrelated provider.
+    """
+    cm = _load_custom_models_config()
+    if not cm:
+        return False
+    entry = cm.get(model_name)
+    return isinstance(entry, dict)
+
+
 def validate_requested_model(
     model_name: str,
     provider: Optional[str],
@@ -3725,19 +3731,16 @@ def validate_requested_model(
             "message": "Model names cannot contain spaces.",
         }
 
-    # OpenRouter Fusion virtual profiles (fusion-budget, fusion-frontier) are
-    # Hermes-side aliases that map to ``openrouter/fusion`` + a plugins block.
-    # They will never appear in OpenRouter's /v1/models listing, so accept
-    # them early before the generic live-probe path rejects them.
-    if normalized == "openrouter":
-        _fusion_ids = {mid.lower() for mid, _ in OPENROUTER_FUSION_PROFILE_MODELS}
-        if requested.lower() in _fusion_ids:
-            return {
-                "accepted": True,
-                "persist": True,
-                "recognized": True,
-                "message": None,
-            }
+    # Config-driven custom models (e.g. OpenRouter Fusion profiles) are
+    # user-defined virtual IDs that never appear in any live /v1/models
+    # listing. Accept them early before the generic probe rejects them.
+    if _is_custom_model(requested, provider=normalized):
+        return {
+            "accepted": True,
+            "persist": True,
+            "recognized": True,
+            "message": None,
+        }
 
     if normalized == "lmstudio":
         from hermes_cli.auth import AuthError
