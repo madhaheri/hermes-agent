@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import re
 import subprocess
 import threading
@@ -62,13 +63,17 @@ HttpRunner = Callable[[str, float, int], HttpResult]
 
 def run_command(argv: Sequence[str], timeout_s: float, output_limit: int) -> CommandResult:
     """Run one fixed diagnostic command with timeout and a hard output limit."""
+    env = {"PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "LANG": "C", "LC_ALL": "C"}
+    for name in ("HOME", "SSH_AUTH_SOCK"):
+        if name in os.environ:
+            env[name] = os.environ[name]
     try:
         process = subprocess.Popen(
             list(argv),
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
-            env={"PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "LANG": "C", "LC_ALL": "C"},
+            env=env,
         )
     except OSError:
         return CommandResult(-1, b"", timed_out=True)
@@ -285,23 +290,13 @@ def _gpus(host: Host, runner: CommandRunner) -> dict[str, object]:
 
 
 def _router(runner: HttpRunner) -> dict[str, object]:
-    result = runner("http://127.0.0.1:11437/health", _HTTP_TIMEOUT_S, _MAX_HTTP_BYTES)
-    payload = _json_object(result)
+    result = runner("http://127.0.0.1:11437/", _HTTP_TIMEOUT_S, _MAX_HTTP_BYTES)
     if result.status == 0:
         state = "unknown"
     elif result.status != 200:
         state = "unhealthy"
-    elif payload is None:
-        state = "unknown"
     else:
-        raw = payload.get("status")
-        state = (
-            "healthy"
-            if raw in {"ok", "healthy"}
-            else "unhealthy"
-            if isinstance(raw, str)
-            else "unknown"
-        )
+        state = "healthy" if b"Ollama is running" in result.body else "unknown"
     return {"state": state, "http_status": result.status or None}
 
 

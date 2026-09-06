@@ -1,4 +1,5 @@
 import json
+from io import BytesIO
 
 from agent.monitoring import cluster_monitor
 from agent.monitoring.cluster_monitor import ClusterMonitor, CommandResult, HttpResult
@@ -22,7 +23,87 @@ def _http(url, _timeout, limit):
         return HttpResult(200, b'{"version":"1.2.3"}')
     if url.endswith("/api/tags"):
         return HttpResult(200, b'{"models":[{"name":"private-model"}]}')
-    return HttpResult(200, b'{"status":"healthy"}')
+    return HttpResult(200, b"Ollama is running")
+
+
+class _Process:
+    def __init__(self):
+        self.stdout = BytesIO(b"")
+        self.returncode = 0
+
+    def wait(self, timeout=None):
+        return self.returncode
+
+    def kill(self):
+        self.returncode = -9
+
+
+def test_run_command_preserves_only_ssh_authentication_environment(monkeypatch):
+    captured = {}
+    monkeypatch.setenv("HOME", "/private/auth-home")
+    monkeypatch.setenv("SSH_AUTH_SOCK", "/private/agent.sock")
+    monkeypatch.setenv("MONITOR_SECRET", "must-not-be-inherited")
+
+    def popen(argv, **kwargs):
+        captured.update(kwargs)
+        return _Process()
+
+    monkeypatch.setattr(cluster_monitor.subprocess, "Popen", popen)
+
+    assert cluster_monitor.run_command(["ssh", "example"], 1, 100) == CommandResult(0, b"")
+    assert captured["env"] == {
+        "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+        "LANG": "C",
+        "LC_ALL": "C",
+        "HOME": "/private/auth-home",
+        "SSH_AUTH_SOCK": "/private/agent.sock",
+    }
+    assert "MONITOR_SECRET" not in repr(captured["env"])
+
+
+def test_run_command_omits_absent_optional_ssh_environment(monkeypatch):
+    captured = {}
+    monkeypatch.delenv("HOME", raising=False)
+    monkeypatch.delenv("SSH_AUTH_SOCK", raising=False)
+
+    def popen(argv, **kwargs):
+        captured.update(kwargs)
+        return _Process()
+
+    monkeypatch.setattr(cluster_monitor.subprocess, "Popen", popen)
+
+    assert cluster_monitor.run_command(["true"], 1, 100) == CommandResult(0, b"")
+    assert captured["env"] == {
+        "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+        "LANG": "C",
+        "LC_ALL": "C",
+    }
+
+
+def test_router_probes_root_and_classifies_fixed_health_literal():
+    calls = []
+
+    def runner(url, timeout, limit):
+        calls.append((url, timeout, limit))
+        return HttpResult(200, b"service says: Ollama is running\n")
+
+    assert cluster_monitor._router(runner) == {"state": "healthy", "http_status": 200}
+    assert calls == [("http://127.0.0.1:11437/", 3.0, cluster_monitor._MAX_HTTP_BYTES)]
+
+
+def test_router_treats_other_success_bodies_as_unknown_and_non_200_as_unhealthy():
+    assert cluster_monitor._router(lambda *_args: HttpResult(200, b'{"status":"healthy"}')) == {
+        "state": "unknown",
+        "http_status": 200,
+    }
+    assert cluster_monitor._router(lambda *_args: HttpResult(200, b"\xffmalformed")) == {
+        "state": "unknown",
+        "http_status": 200,
+    }
+    assert cluster_monitor._router(lambda *_args: HttpResult(503, b"Ollama is running")) == {
+        "state": "unhealthy",
+        "http_status": 503,
+    }
 
 
 def test_success_covers_fixed_cluster_without_model_names():
