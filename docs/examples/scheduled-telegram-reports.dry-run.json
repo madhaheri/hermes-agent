@@ -1,0 +1,117 @@
+{
+  "schema_version": 1,
+  "dry_run": true,
+  "delivery": {
+    "active": "local",
+    "intended": "telegram:<chat-id>[:<thread-id>]",
+    "network_writes": false
+  },
+  "redaction": {
+    "remove_fields": [
+      "authorization",
+      "cookie",
+      "password",
+      "secret",
+      "token",
+      "api_key",
+      "private_key"
+    ],
+    "replace_patterns": [
+      "credential-bearing URLs",
+      "Bearer credentials",
+      "email addresses not explicitly allowlisted",
+      "public or private IP addresses beyond the final octet"
+    ],
+    "maximum_output_characters": 12000,
+    "on_redaction_error": "fail_closed"
+  },
+  "reports": [
+    {
+      "id": "daily-infrastructure-health",
+      "schedule": "0 8 * * *",
+      "timezone": "scheduler-local",
+      "prompt": "Read approved health inputs only. Emit one JSON object matching output_schema. Redact before rendering. Never include credentials or raw logs.",
+      "input_schema": {
+        "required": ["observed_at", "services"],
+        "properties": {
+          "observed_at": "RFC3339 timestamp",
+          "services": "array of {name,status,latency_ms?,summary?}"
+        }
+      },
+      "output_schema": {
+        "required": ["report", "observed_at", "overall", "services"],
+        "properties": {
+          "report": "daily-infrastructure-health",
+          "observed_at": "RFC3339 timestamp",
+          "overall": "healthy|degraded|down|unknown",
+          "services": "redacted bounded array",
+          "notes": "redacted string"
+        }
+      },
+      "failure": {
+        "collection": "emit status unknown with source name and no raw exception",
+        "partial": "mark missing sources unknown and continue",
+        "render_or_redaction": "suppress report and record a local failure",
+        "delivery": "retain locally; do not retry from this dry-run artifact"
+      }
+    },
+    {
+      "id": "weekly-model-performance",
+      "schedule": "0 9 * * 1",
+      "timezone": "scheduler-local",
+      "prompt": "Aggregate approved seven-day model metrics. Require a minimum sample count, label missing data, and emit one redacted JSON object matching output_schema.",
+      "input_schema": {
+        "required": ["window_start", "window_end", "models"],
+        "properties": {
+          "window_start": "RFC3339 timestamp",
+          "window_end": "RFC3339 timestamp",
+          "models": "array of aggregate metrics without prompts or transcripts"
+        }
+      },
+      "output_schema": {
+        "required": ["report", "window", "models", "sample_floor"],
+        "properties": {
+          "report": "weekly-model-performance",
+          "window": "{start,end}",
+          "models": "array of {model,requests,success_rate,p50_latency_ms,p95_latency_ms,cost?}",
+          "sample_floor": "integer",
+          "caveats": "array of redacted strings"
+        }
+      },
+      "failure": {
+        "collection": "omit failed source and add a caveat",
+        "insufficient_samples": "report insufficient_data; do not rank models",
+        "render_or_redaction": "suppress report and record a local failure",
+        "delivery": "retain locally; do not retry from this dry-run artifact"
+      }
+    },
+    {
+      "id": "alert-report",
+      "schedule": "*/5 * * * *",
+      "timezone": "scheduler-local",
+      "prompt": "Evaluate approved alert inputs against explicit thresholds. Emit [SILENT] when none fire; otherwise emit one redacted JSON object matching output_schema.",
+      "input_schema": {
+        "required": ["observed_at", "alerts"],
+        "properties": {
+          "observed_at": "RFC3339 timestamp",
+          "alerts": "array of {source,severity,summary,threshold,observed_value}"
+        }
+      },
+      "output_schema": {
+        "required": ["report", "observed_at", "alerts"],
+        "properties": {
+          "report": "alert-report",
+          "observed_at": "RFC3339 timestamp",
+          "alerts": "redacted array of {source,severity,summary,threshold,observed_value}",
+          "runbook": "optional approved URL without credentials"
+        }
+      },
+      "failure": {
+        "collection": "emit one source-unavailable alert only after the configured consecutive-failure threshold",
+        "no_threshold_crossed": "emit [SILENT]",
+        "render_or_redaction": "suppress report and record a local failure",
+        "delivery": "retain locally; do not retry from this dry-run artifact"
+      }
+    }
+  ]
+}

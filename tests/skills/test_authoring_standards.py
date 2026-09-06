@@ -79,6 +79,20 @@ def test_at_least_the_expected_population():
     assert any(str(p.parent).startswith(str(REPO / "skills")) for p in paths)
 
 
+def test_frontmatter_names_are_globally_unique():
+    """A canonical name must resolve to exactly one bundled or optional skill."""
+    paths_by_name = {}
+    for p in _skill_paths():
+        fm, _ = _frontmatter(p)
+        name = fm.get("name")
+        paths_by_name.setdefault(name, []).append(_rel(p))
+
+    collisions = {
+        name: paths for name, paths in paths_by_name.items() if len(paths) > 1
+    }
+    assert not collisions, f"duplicate skill names resolve ambiguously: {collisions}"
+
+
 @pytest.mark.parametrize("p", _params())
 def test_required_frontmatter_fields(p):
     fm, _ = _frontmatter(p)
