@@ -141,9 +141,11 @@ class HostResourceSampler:
                         values[fields[0]] = int(fields[1])
                     except ValueError:
                         pass
-            memory = _percent(values.get("MemTotal", 0) - values.get("MemAvailable", 0), values.get("MemTotal", 0))
-            swap = _percent(values.get("SwapTotal", 0) - values.get("SwapFree", 0), values.get("SwapTotal", 0))
-            if values.get("SwapTotal") == 0:
+            if "MemTotal" in values and "MemAvailable" in values:
+                memory = _percent(values["MemTotal"] - values["MemAvailable"], values["MemTotal"])
+            swap_total = values.get("SwapTotal", 0)
+            swap = _percent(swap_total - values.get("SwapFree", 0), swap_total)
+            if swap_total == 0:
                 swap = 0.0
         stat = _bounded_text(Path("/proc/stat"), _MAX_MARKER_BYTES)
         if stat:

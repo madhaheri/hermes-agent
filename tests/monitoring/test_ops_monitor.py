@@ -3,7 +3,7 @@ import sqlite3
 from datetime import datetime, timezone
 
 from agent.monitoring import ops_monitor
-from agent.monitoring.ops_monitor import OperationsMonitor, ResourceSample
+from agent.monitoring.ops_monitor import HostResourceSampler, OperationsMonitor, ResourceSample
 
 
 NOW = 2_000_000_000.0
@@ -24,6 +24,30 @@ def _healthy_home(tmp_path):
 
 def _resources(cpu=10.0):
     return ResourceSample(disk_percent=20, memory_percent=30, swap_percent=0, cpu_percent=cpu)
+
+
+def _sample_meminfo(monkeypatch, meminfo):
+    monkeypatch.setattr(
+        ops_monitor,
+        "_bounded_text",
+        lambda path, _limit: meminfo if str(path) == "/proc/meminfo" else None,
+    )
+    return HostResourceSampler()()
+
+
+def test_missing_mem_available_reports_unknown_memory(monkeypatch):
+    sample = _sample_meminfo(monkeypatch, "MemTotal: 1000 kB\nSwapTotal: 0 kB\n")
+
+    assert sample.memory_percent is None
+
+
+def test_missing_swap_total_reports_healthy_zero_swap(monkeypatch):
+    sample = _sample_meminfo(
+        monkeypatch,
+        "MemTotal: 1000 kB\nMemAvailable: 500 kB\nSwapFree: 250 kB\n",
+    )
+
+    assert sample.swap_percent == 0.0
 
 
 def test_healthy_run_is_silent_and_reads_injected_home(tmp_path, capsys, monkeypatch):
