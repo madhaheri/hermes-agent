@@ -80,8 +80,9 @@ def _current_checkout_sha() -> str | None:
 def _receipt_looks_unfinished(receipt: dict) -> bool:
     """True when *receipt* is from an update that did not finish cleanly."""
     gateway_restart = receipt.get("gateway_restart")
+    stop_reason = receipt.get("stop_reason")
     return bool(
-        receipt.get("stop_reason")
+        (stop_reason and stop_reason != "completed at command boundary")
         or receipt.get("exit_code") not in (0, None)
         or receipt.get("outcome") in ("failed", "partial", "running")
         or (isinstance(gateway_restart, dict) and gateway_restart.get("incomplete"))
