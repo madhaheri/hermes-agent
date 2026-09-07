@@ -13,6 +13,25 @@ acceptance tests, time/turn/cost limits, and allowed side effects. Refuse a run
 whose worktree contains overlapping user changes or whose success criteria cannot
 be tested.
 
+Run the read-only agent preflight before admitting work:
+
+```text
+python3 scripts/check_coding_agents.py
+```
+
+It must find both CLIs, verify their versions, and verify first-party
+authentication. If Claude is selected for the task, run the bounded live check
+as well:
+
+```text
+python3 scripts/check_coding_agents.py --smoke
+```
+
+The smoke check uses print mode, one turn, no session persistence, and a $0.10
+cap. A failed preflight is an `admission_failed`/`auth` failure; do not silently
+switch providers or launch a delegate. The check deliberately records only
+boolean authentication status and never emits account or credential data.
+
 | Model brief | Route when | Required brief emphasis |
 |---|---|---|
 | Claude Opus | Cross-cutting design, subtle debugging, security review | Invariants, alternatives rejected, smallest safe patch |
