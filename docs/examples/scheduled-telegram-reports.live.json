@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "mode": "live",
+  "delivery": {
+    "platform": "telegram",
+    "chat_id": "7320341344",
+    "network_writes": true,
+    "redaction": "required-before-delivery",
+    "failure_behavior": "record-and-alert"
+  },
+  "reports": [
+    {
+      "id": "daily-infrastructure-health",
+      "schedule": "0 8 * * *",
+      "job_id": "7c1298574849",
+      "read_only": true,
+      "delivery": "origin"
+    },
+    {
+      "id": "weekly-model-performance",
+      "schedule": "0 9 * * 1",
+      "job_id": "60264cc3f2e1",
+      "read_only": true,
+      "delivery": "origin"
+    },
+    {
+      "id": "alert-scan",
+      "schedule": "*/5 * * * *",
+      "job_id": "7b6ef6d36535",
+      "read_only": true,
+      "delivery": "origin",
+      "silent_when": "NO_ALERT"
+    }
+  ],
+  "verification": {
+    "jobs_file": "~/.hermes/cron/jobs.json",
+    "delivery_store": "~/.hermes/cron/deliveries.db",
+    "last_verified": "2026-09-07",
+    "observed": "The infrastructure report and alert scan have completed and been marked delivered; the weekly report is scheduled and has not yet run in the current cycle."
+  }
+}

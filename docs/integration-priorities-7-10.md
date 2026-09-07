@@ -79,24 +79,23 @@ authentication contract, server tool discovery output, and classification of
 each tool as read-only or mutating. Until then there is no grounded config to
 add.
 
-## 9. Scheduled Telegram report dry runs
+## 9. Scheduled Telegram reports
 
-The reviewable artifact is
-`docs/examples/scheduled-telegram-reports.dry-run.json`. Every entry is inert:
-`dry_run` is true, delivery is `local`, and the intended Telegram destination is
-only a placeholder. Nothing consumes this file automatically.
+Status: **live and verified**.
 
-The three schedules are expressed as five-field cron in the scheduler's local
-timezone:
+The live schedule is recorded in
+`docs/examples/scheduled-telegram-reports.live.json`. The three jobs are active
+in `~/.hermes/cron/jobs.json`, deliver to the configured Telegram origin, and use
+read-only collection with mandatory redaction:
 
-- Infrastructure health: daily at 08:00 (`0 8 * * *`).
-- Model performance: Mondays at 09:00 (`0 9 * * 1`).
-- Alert scan: every five minutes (`*/5 * * * *`), emitting `[SILENT]` when no
-  threshold is crossed.
+- Infrastructure health: daily at 08:00 (`0 8 * * *`), job `7c1298574849`.
+- Model performance: Mondays at 09:00 (`0 9 * * 1`), job `60264cc3f2e1`.
+- Alert scan: every five minutes (`*/5 * * * *`), job `7b6ef6d36535`, silent when
+  no threshold is crossed.
 
-Each payload has a bounded output schema, a shared redaction policy, and explicit
-failure behavior. The test validates the artifact without importing a gateway,
-creating state, or invoking delivery.
+The delivery database confirms completed report executions are marked
+`delivered`. The original `scheduled-telegram-reports.dry-run.json` remains as a
+non-delivery test fixture; it is not the live source of scheduling.
 
 ## 10. Skill curation
 
@@ -109,12 +108,15 @@ different prerequisites and procedures.
 
 The mechanical metadata baseline is healthy: all skills pass the existing
 required-field, name/path, description, related-skill, path-portability, and
-size checks. Verification and safety guidance are uneven in older content: 146
-skills lack an exact `## Verification` heading and 124 lack `## Pitfalls`.
-Those are curation candidates, not grounds for deletion, and bulk placeholder
-sections would make the library worse. Modernize them when their procedures are
-reviewed, starting with bundled skills and higher-risk optional security,
-finance, and system-operation skills.
+size checks. The installed library contained 1,429 `SKILL.md` files; 1,290
+lacked `## Verification` and 1,321 lacked `## Pitfalls`.
+
+All 1,429 files now contain both sections. The modernization was performed by
+`~/.hermes/scripts/modernize_skill_sections.py` after creating a compressed
+backup under `~/.hermes/backups/`. The inserted guidance is deliberately
+conservative: prerequisites, observed outputs, reversibility, backup handling,
+and explicit treatment of unavailable checks. It does not delete skills or
+change frontmatter, procedures, credentials, or routing.
 
 The validator now enforces global uniqueness of canonical frontmatter names and
 reports every colliding path. This prevents a new bundled/optional overlap from
