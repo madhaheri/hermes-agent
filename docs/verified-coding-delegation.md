@@ -3,8 +3,10 @@
 This specification governs non-interactive coding work delegated from Hermes to
 Claude Code CLI or Codex CLI. It is an orchestration contract, not a provider
 configuration guide. Delegates use only their first-party authenticated routes:
-Anthropic for Claude Code and OpenAI for Codex. OpenRouter, `--oss`, local
-providers, Ollama, and other inference proxies are out of scope.
+Anthropic for Claude Code and OpenAI for Codex. Local providers and Ollama are
+out of scope because this work requires cloud-model quality. OpenRouter and
+AISA are emergency backup-only providers and must not be used without explicit
+authorization. See `docs/provider-routing-policy.md`.
 
 ## Admission and routing
 
