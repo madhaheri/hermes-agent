@@ -195,6 +195,23 @@ class TestSkillViewQualifiedName:
         assert result["name"] == "superpowers:writing-plans"
         assert "writing-plans body." in result["content"]
 
+    def test_fork_plugin_skill_is_hidden_from_inline_load_but_available_to_internal_dispatch(self, tmp_path):
+        from tools.skills_tool import skill_view
+
+        self._register_skill(
+            tmp_path,
+            name="deep-research",
+            content="---\nname: deep-research\ncontext: fork\n---\nResearch only in child.\n",
+        )
+
+        inline = json.loads(skill_view("superpowers:deep-research", preprocess=False))
+        forked = json.loads(skill_view("superpowers:deep-research", preprocess=False, allow_fork=True))
+
+        assert inline["success"] is False
+        assert "isolated child" in inline["error"]
+        assert forked["success"] is True
+        assert forked["fork_body"].strip() == "Research only in child."
+
     def test_reads_supporting_file_with_containment(self, tmp_path):
         from tools.skills_tool import skill_view
 

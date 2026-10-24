@@ -800,6 +800,10 @@ def _invoke_agent(
         prelude = _onboarding_prelude(agent, st.history)
         if prelude is not None:
             run_kwargs["prelude"] = prelude
+    from agent.skill_fork import normalize_forked_user_text
+    run_kwargs["persist_user_message"] = normalize_forked_user_text(
+        run_kwargs["persist_user_message"],
+    )
     _adopt_submit_user_row(session, agent, run_kwargs["persist_user_message"], text)
     # Live-rename hook: auto-titling fires inside the turn prologue.
     _title_key = session.get("session_key") or sid

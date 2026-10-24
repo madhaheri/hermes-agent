@@ -165,6 +165,12 @@ supported. Skill resolution requires `session:submit` and returns the existing
 that message through `prompt.submit`, retaining their own durable input identity.
 Resolution itself does not start a turn or change the cached system prompt; the
 normal durable admission path owns FIFO, retries, approvals, and execution.
+For `context: fork`, the directive's message is a body-free marker containing only the
+invocation descriptor. `prompt.submit` may cross an owner/compute-host boundary; the
+receiving turn re-resolves the skill under its profile, materializes it before persistence,
+and dispatches the body only to the synchronous delegated child. The submit-time durable row
+must contain the rendered slash invocation, not the marker; isolated compute-host frames carry
+that already-written row so the worker adopts it rather than appending a duplicate.
 
 `type: exec` quick commands and plugin slash commands require `session:control` and
 run through the messaging gateway's own dispatch (`gateway/run_inbound_hooks.py`: slash

@@ -311,6 +311,21 @@ class TestSlashCommandCompleter:
         assert completions[0].display_text == "/gif-search"
         assert completions[0].display_meta_text == "⚡ Search for GIFs across providers"
 
+    def test_argument_hint_is_shown_in_skill_completion_metadata(self):
+        completer = SlashCommandCompleter(
+            skill_commands_provider=lambda: {
+                "/fix-issue": {
+                    "description": "Fix a GitHub issue",
+                    "args_hint": "<issue-number> [branch]",
+                },
+            }
+        )
+
+        completions = _completions(completer, "/fix")
+
+        assert len(completions) == 1
+        assert completions[0].display_meta_text == "⚡ Fix a GitHub issue · <issue-number> [branch]"
+
 
     def test_skill_provider_exception_is_swallowed(self):
         """A broken provider should not crash autocomplete."""
@@ -628,6 +643,7 @@ class TestTelegramMenuCommands:
             "/local-one": {
                 "name": "local-one",
                 "description": "Local",
+                "args_hint": "<file>",
                 "skill_md_path": f"{local_dir}/local-one/SKILL.md",
                 "skill_dir": f"{local_dir}/local-one",
             },
@@ -657,6 +673,7 @@ class TestTelegramMenuCommands:
 
         menu_names = {n for n, _ in menu}
         assert "local_one" in menu_names, "local skill must appear"
+        assert dict(menu)["local_one"].startswith("<file> · Local")
         assert "morning_briefing" in menu_names, (
             "external skill from skills.external_dirs must appear (fixes #8110)"
         )
@@ -937,6 +954,28 @@ from hermes_cli.commands_platforms import discord_skill_commands_by_category
 
 class TestDiscordSkillCommandsByCategory:
     """Tests for discord_skill_commands_by_category() — /skill group registration."""
+
+    def test_argument_hint_is_shown_before_skill_description(self, tmp_path, monkeypatch):
+        from unittest.mock import patch
+
+        skill_dir = tmp_path / "skills" / "work" / "fix-issue"
+        skill_dir.mkdir(parents=True)
+        skill_file = skill_dir / "SKILL.md"
+        skill_file.write_text("---\nname: fix-issue\n---\n", encoding="utf-8")
+        monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+        commands = {
+            "/fix-issue": {
+                "name": "fix-issue", "description": "Fix a GitHub issue",
+                "args_hint": "<issue-number>", "skill_md_path": str(skill_file),
+            },
+        }
+        with (
+            patch("agent.skill_commands.get_skill_commands", return_value=commands),
+            patch("tools.skills_tool.SKILLS_DIR", tmp_path / "skills"),
+        ):
+            categories, _uncategorized, _hidden = discord_skill_commands_by_category(set())
+
+        assert categories["work"][0][1] == "<issue-number> · Fix a GitHub issue"
 
 
     def test_no_legacy_25x25_cap(self, tmp_path, monkeypatch):

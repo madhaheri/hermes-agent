@@ -199,6 +199,7 @@ name: my-skill
 description: Brief description of what this skill does
 version: 1.0.0
 platforms: [macos, linux]     # Optional — restrict to specific OS platforms
+paths: ["src/**/*.py"]        # Optional — activate after read_file reads a matching project file
 metadata:
   hermes:
     tags: [python, automation]
@@ -244,6 +245,60 @@ platforms: [macos, linux]     # macOS and Linux
 ```
 
 When set, the skill is automatically hidden from the system prompt, `skills_list()`, and slash commands on incompatible platforms. If omitted, the skill loads on all platforms.
+
+### Invocation controls
+
+Two optional Claude-compatible frontmatter fields control how a skill is offered:
+
+```yaml
+disable-model-invocation: true  # Keep it available to users, but omit it from model discovery/retrieval.
+user-invocable: false           # Keep it available for model discovery, but hide its slash command.
+```
+
+Both default to `false` and `true`, respectively. These are discovery controls, not access controls: they do not prevent a model from loading a skill through a separately available tool or workflow.
+
+### Skill arguments
+
+When a user invokes one skill directly with `/skill-name <arguments>`, its body can use Claude-compatible placeholders:
+
+```yaml
+arguments: [issue, branch]
+argument-hint: <issue-number> [branch]
+```
+
+```markdown
+Fix issue $issue on branch $branch. Input: $ARGUMENTS
+The first argument is $0; the second is $ARGUMENTS[1].
+```
+
+`$ARGUMENTS` inserts the full typed tail; `$ARGUMENTS[N]` and `$N` select a zero-based argument, and names in the optional `arguments` list map to positions in order. Quote multi-word values, for example `/fix-issue "login crash" release`. Missing indexed arguments remain as written; missing named arguments become empty. The original invocation tail remains in the footer for traceability, so values inserted into the body can appear there a second time. Argument insertion occurs after skill preprocessing, so user-supplied text is not executed as a shell placeholder.
+
+`argument-hint` is a display hint, not validation or parsing. Hermes shows it beside the skill description in CLI/TUI slash completion and appends it to gateway skill-menu descriptions where supported.
+
+### Forked skills (`context: fork`)
+
+Set `context: fork` to run an explicitly invoked skill in an isolated delegated child instead of loading its instructions into the parent conversation:
+
+```yaml
+context: fork
+arguments: [topic]
+```
+
+Invoke it with `/skill-name <arguments>`. Hermes sends the processed skill instructions as the child task and the typed tail as child context; only the child's result returns to the parent. The body is not inserted into the parent's user message or system prompt; the child result may quote it. Forked skills are hidden from model skill discovery and cannot be loaded inline with `skill_view`; they require an explicit slash invocation. Execution is synchronous and uses Hermes's default delegated child. Named `agent:` routing and `background: true` are not supported yet; those frontmatter values return an explanation instead of running the skill. A forked skill also ends stacked-skill expansion so the rest of its invocation remains arguments.
+
+**Maintainer follow-up:** First verify the slash-to-child flow live through both Gateway and TUI after reloading those processes. Treat named-agent routing and background execution as separate follow-ups: define the agent-to-profile mapping, then specify asynchronous result delivery, resumption, and cancellation before enabling `background: true`.
+
+### Path-scoped activation
+
+Use the optional top-level `paths` field to activate a skill when Hermes reads a matching file with `read_file`:
+
+```yaml
+paths:
+  - src/**/*.py
+  - tests/**/*.py
+```
+
+Patterns are relative to the active session working directory. `**/` matches zero or more directory levels. Hermes only matches paths inside that directory; files outside it do not activate the skill. After a match, up to three matching skill bodies are added to the read result. Repeated reads avoid reinjecting a skill while its activation marker remains in conversation history; a later reactivation is possible after context compaction removes that marker. Path activation does not execute shell placeholders embedded in the skill.
 
 ## Skill output and media delivery
 

@@ -14,6 +14,7 @@ import json
 import threading
 import time
 import types
+from typing import Any, cast
 
 import pytest
 
@@ -77,6 +78,49 @@ def _session(agent) -> dict:
         "cols": 80, "slash_worker": None, "show_reasoning": False, "tool_progress_mode": "all",
         "inflight_turn": None, "active_session_lease": object(),
     }
+
+
+def test_compute_host_handoff_carries_and_stages_a_fork_user_row(monkeypatch):
+    from contextlib import nullcontext
+
+    from agent.skill_fork import ForkedSkillRequest, normalize_forked_user_text, register_forked_skill
+    from tui_gateway import server
+
+    invocation = "/fork-probe topic"
+    marker = register_forked_skill(ForkedSkillRequest(
+        name="fork-probe", invocation=invocation, goal="", context="topic",
+        raw_body="private skill body",
+    ))
+    staged = {"role": "user", "content": normalize_forked_user_text(marker), "_row_id": 7}
+    session = _session(_agent([]))
+    session["active_session_lease"] = None
+    session["_submit_user_row"] = staged
+    frame_builder = cast(Any, server)._compute_host_turn_frame
+    frame = frame_builder("rid", "sid", session, marker)
+    assert frame["submit_user_row"] == staged
+
+    adopted = {}
+    monkeypatch.setitem(server._sessions, "sid", session)
+    monkeypatch.setattr(server, "_install_borrowed_lease", lambda *args: None)
+    monkeypatch.setattr(server, "_start_inflight_turn", lambda *args: None)
+    monkeypatch.setattr(server, "_ensure_session_db_row", lambda *args: True)
+    monkeypatch.setattr(server, "_persist_branch_seed", lambda *args: None)
+    monkeypatch.setattr(server, "_session_db", lambda *_args: nullcontext(None))
+    monkeypatch.setattr(server, "_reopen_if_finalized", lambda *args: None)
+    monkeypatch.setattr("tui_gateway.compute_host._history_meta", lambda *_args: {})
+    monkeypatch.setattr(server, "_session_info", lambda *_args: {})
+    monkeypatch.setattr(
+        server, "_run_prompt_submit",
+        lambda _rid, _sid, current, _text, **_kwargs: adopted.update(current["_submit_user_row"]),
+    )
+    host = ComputeHost(stdout=io.StringIO(), heartbeat_secs=0)
+    try:
+        host._run_real_turn(frame)
+    finally:
+        server._sessions.pop("sid", None)
+        host.close()
+
+    assert adopted == staged
 
 
 def test_turn_start_streams_deltas_then_turn_end_with_history_identity(turn_env):

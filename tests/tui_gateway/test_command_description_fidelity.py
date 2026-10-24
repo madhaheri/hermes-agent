@@ -23,3 +23,26 @@ def test_full_descriptions_survive_catalog_and_completion(monkeypatch):
     completions = list(completer.get_completions(Document("/proof"), CompleteEvent()))
     assert len(completions) == 2
     assert all(description in completion.display_meta_text for completion in completions)
+
+
+def test_skill_argument_hint_survives_command_catalog_and_completion(monkeypatch):
+    from agent import skill_commands
+    from hermes_cli.commands_completion import SlashCommandCompleter
+    from tui_gateway import server
+
+    skills = {
+        "/fix-issue": {
+            "name": "fix-issue",
+            "description": "Fix a GitHub issue",
+            "args_hint": "<issue-number>",
+        },
+    }
+    monkeypatch.setattr(skill_commands, "get_interactive_skill_commands", lambda: skills)
+    monkeypatch.setattr(server, "_load_cfg", dict)
+    catalog = server._methods["commands.catalog"](1, {})["result"]
+    description = dict(catalog["pairs"])["/fix-issue"]
+    completion = next(SlashCommandCompleter(skill_commands_provider=lambda: skills).get_completions(
+        Document("/fix"), CompleteEvent()))
+
+    assert description == "Fix a GitHub issue · <issue-number>"
+    assert completion.display_meta_text == "⚡ Fix a GitHub issue · <issue-number>"

@@ -1182,6 +1182,8 @@ def _skill_should_show(
     session_platform: str | None = None,
 ) -> bool:
     """False if the skill's conditional activation rules exclude it."""
+    if conditions.get("disable_model_invocation", False) or conditions.get("context_fork", False):
+        return False
     # Gateway-channel gate runs regardless of tool info; fails open when the platform is unknown.
     wanted_platforms = [str(p).strip().lower() for p in (conditions.get("session_platforms") or []) if str(p).strip()]
     if wanted_platforms and session_platform and session_platform.strip().lower() not in wanted_platforms:

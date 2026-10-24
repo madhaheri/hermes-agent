@@ -193,7 +193,9 @@ def _catalog_skills(cat: _Catalog, skills: dict[str, dict], module_loader) -> st
     usage, origin_of = _skill_usage_lookup()
     sc = module_loader("agent.skill_commands")
     for k, info in sorted(sc.get_interactive_skill_commands().items()):
-        cat.pairs.append([k, str(info.get("description", "Skill"))])
+        description = str(info.get("description", "Skill"))
+        hint = str(info.get("args_hint") or "").strip()
+        cat.pairs.append([k, f"{description} · {hint}" if hint else description])
         name = str(info.get("name") or k.lstrip("/"))
         skills[k] = {"usage": usage(name), "origin": origin_of(name)}
     collision_note = getattr(sc, "skill_command_collision_note", None)

@@ -640,7 +640,10 @@ def _persist_session_row_for_submit(rid, session, text=None, display_kind=None):
             with _session_db(session) as db:
                 if db is not None:
                     _reopen_if_finalized(db, str(session.get("session_key") or ""))
-            _persist_submit_user_row(session, text, display_kind)
+            from agent.skill_fork import normalize_forked_user_text
+            _persist_submit_user_row(
+                session, normalize_forked_user_text(text), display_kind,
+            )
             return None
     except Exception as exc:
         failure = describe_storage_failure(exc)

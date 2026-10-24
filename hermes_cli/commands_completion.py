@@ -63,6 +63,13 @@ def _completion(text: str, word: str, display: str, meta) -> Completion:
     return Completion(text, start_position=-len(word), display=display, display_meta=meta)
 
 
+def _skill_completion_meta(info: Mapping[str, Any]) -> str:
+    """Description plus optional author-provided argument hint for a skill command."""
+    description = str(info.get("description") or "Skill command")
+    hint = str(info.get("args_hint") or "").strip()
+    return f"⚡ {description}" + (f" · {hint}" if hint else "")
+
+
 def _prefix_completions(
     rows: Iterable[tuple[str, Any]], partial: str, *, skip_exact: bool = True):
     """A Completion per ``(name, meta)`` whose name starts with the case-folded *partial*."""
@@ -335,7 +342,7 @@ class SlashCommandCompleter(Completer):
             # Exact match: trailing space keeps the dropdown open for the next stacked token.
             yield _completion(
                 f"{cmd} " if self._normalize_skill_token(cmd) == word_key else cmd, current_word, cmd,
-                f"⚡ {info.get('description', 'Skill command')}")
+                _skill_completion_meta(info))
 
     @staticmethod
     def _completion_text(cmd_name: str, word: str) -> str:
@@ -458,7 +465,7 @@ class SlashCommandCompleter(Completer):
                     cmd[1:], f"▣ {info.get('description', 'Skill bundle')} ({skill_count} skills)")
         for cmd, info in self._iter_skill_commands().items():
             if cmd[1:].startswith(word):
-                yield _cmd_completion(cmd[1:], f"⚡ {info.get('description', 'Skill command')}")
+                yield _cmd_completion(cmd[1:], _skill_completion_meta(info))
         for cmd_name, desc in self._plugin_commands().items():
             if cmd_name.startswith(word):
                 yield _cmd_completion(cmd_name, f"🔌 {desc or 'Plugin command'}")

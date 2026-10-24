@@ -10,7 +10,11 @@ from typing import Any, Dict, Mapping, Optional
 
 from hermes_constants import display_hermes_home
 from agent.prompt_cache_boundary import register_stable_prefix
-from agent.skill_preprocessing import load_skills_config as _load_skills_config, preprocess_skill_content
+from agent.skill_preprocessing import (
+    load_skills_config as _load_skills_config,
+    preprocess_skill_content,
+    substitute_skill_arguments,
+)
 from agent.skill_utils import AMBIGUOUS_SKILL_PREFIX
 
 logger = logging.getLogger(__name__)
@@ -163,6 +167,12 @@ def describe_skill_invocation(content: Any, separator: str = " — ") -> Optiona
     """
     if not isinstance(content, str):
         return None
+    from agent.skill_fork import forked_skill_invocation, peek_forked_skill
+    fork = peek_forked_skill(content)
+    fork_invocation = fork.invocation if fork is not None else forked_skill_invocation(content)
+    if fork_invocation is not None:
+        command, *tail = fork_invocation.split(maxsplit=1)
+        return f"{command}{separator}{tail[0]}" if tail else command
     if content.startswith(_AUTO_LOAD_PREFIX):
         return _describe_auto_loaded_skill_turn(content)
     if not content.startswith(_SKILL_INVOCATION_PREFIX):
@@ -250,7 +260,9 @@ def _resolve_skill_commands_project() -> Optional[str]:
     return str(root) if root is not None else None
 
 
-def _load_skill_payload(skill_identifier: str, task_id: str | None = None) -> tuple[dict[str, Any], Path | None, str] | None:
+def _load_skill_payload(
+    skill_identifier: str, task_id: str | None = None, *, allow_fork: bool = False,
+) -> tuple[dict[str, Any], Path | None, str] | None:
     """Load a skill by name/path and return (loaded_payload, skill_dir, display_name)."""
     from agent.safe_worker_policy import safe_worker_enabled
 
@@ -263,7 +275,9 @@ def _load_skill_payload(skill_identifier: str, task_id: str | None = None) -> tu
         from tools.skills_tool import _skills_dir, skill_view
         from agent.skill_utils import normalize_skill_lookup_name
         normalized = normalize_skill_lookup_name(raw_identifier)
-        loaded_skill = json.loads(skill_view(normalized, task_id=task_id, preprocess=False))
+        loaded_skill = json.loads(skill_view(
+            normalized, task_id=task_id, preprocess=False, allow_fork=allow_fork,
+        ))
     except Exception:
         return None
     if not loaded_skill.get("success"):
@@ -370,14 +384,21 @@ def _build_skill_message(
     user_instruction: str = "",
     runtime_note: str = "",
     session_id: str | None = None,
+    substitute_arguments: bool = False,
 ) -> str:
     """Format a loaded skill into a user/system message payload."""
     from tools.skills_tool import _skills_dir
     # Preprocess first so downstream blocks see the expanded content.
     content = preprocess_skill_content(
         str(loaded_skill.get("content") or ""), skill_dir, session_id, skills_cfg=_load_skills_config(),
-    )
-    parts = [activation_note, "", content.strip()]
+    ).strip()
+    argument_boundary = None
+    arguments_consumed = False
+    if substitute_arguments:
+        content, argument_boundary, arguments_consumed = substitute_skill_arguments(
+            content, user_instruction, loaded_skill.get("arguments"),
+        )
+    parts = [activation_note, "", content]
     # Absolute skill dir lets the agent run bundled scripts without a skill_view() round-trip.
     if skill_dir:
         parts += ["", f"[Skill directory: {skill_dir}]", _SKILL_DIR_NOTE]
@@ -411,13 +432,16 @@ def _build_skill_message(
     if runtime_note:
         parts += ["", f"[Runtime note: {runtime_note}]"]
     message = "\n".join(parts)
+    if arguments_consumed and argument_boundary is not None:
+        stable_prefix = message[:len(activation_note) + 2 + argument_boundary]
     if stable_prefix is not None and message.startswith(stable_prefix) and len(message) > len(stable_prefix):
         register_stable_prefix(stable_prefix)
     return message
 
 
 def _render_skill_block(
-    loaded: tuple[dict[str, Any], Path | None, str], activation_note: str, task_id: str | None, **message_kwargs: str,
+    loaded: tuple[dict[str, Any], Path | None, str], activation_note: str, task_id: str | None,
+    **message_kwargs: Any,
 ) -> str:
     """Bump Curator usage tracking (never fatal) and build the message block for one loaded skill."""
     loaded_skill, skill_dir, skill_name = loaded
@@ -478,12 +502,15 @@ def skill_command_collision_note(name: str) -> Optional[str]:
 
 def _scan_skill_md(skill_md: Path, disabled: set, seen_names: set, commands: dict[str, dict[str, Any]]) -> None:
     """Register one SKILL.md in *commands* (no-op when filtered or colliding)."""
+    from agent.skill_utils import skill_frontmatter_flag
     from tools.skills_tool import _parse_frontmatter, skill_matches_apps, skill_matches_platform, skill_matches_environment
     if any(part in _SCAN_SKIP_PARTS for part in skill_md.parts):
         return
     frontmatter, body = _parse_frontmatter(skill_md.read_text(encoding='utf-8-sig'))
     # OS gate is hard; environment gate (kanban/docker/s6) is offer-time only.
     if not skill_matches_platform(frontmatter) or not skill_matches_environment(frontmatter) or not skill_matches_apps(frontmatter):
+        return
+    if not skill_frontmatter_flag(frontmatter, "user-invocable", default=True):
         return
     name = frontmatter.get('name', skill_md.parent.name)
     if name in seen_names or name in disabled:
@@ -510,11 +537,15 @@ def _scan_skill_md(skill_md: Path, disabled: set, seen_names: set, commands: dic
                        name, cmd_key, commands[cmd_key]["name"])
         return
     commands[cmd_key] = {"name": name, "description": description or f"Invoke the {name} skill",
+                         "args_hint": str(frontmatter.get("argument-hint") or "").strip(),
+                         "context": str(frontmatter.get("context") or "").strip().lower(),
+                         "agent": str(frontmatter.get("agent") or "").strip(),
+                         "background": skill_frontmatter_flag(frontmatter, "background", default=False),
                          "skill_md_path": str(skill_md), "skill_dir": str(skill_md.parent)}
 
 
 def scan_skill_commands() -> dict[str, dict[str, Any]]:
-    """Scan skill dirs and return {"/skill-name": {name, description, skill_md_path, skill_dir}}.
+    """Scan skill dirs and return ``{cmd_key: {name, description, args_hint, skill_md_path, skill_dir}}``.
     Builds a local map and publishes once at the end: writing straight into the
     global exposed partial results to overlapping scans, which then logged
     bogus "already claimed" collisions against their own incumbents."""
@@ -681,6 +712,7 @@ def get_plugin_skill_commands() -> dict[str, dict[str, Any]]:
 def _scan_plugin_skill_commands(manager, metadata: list, tag: tuple) -> dict[str, dict[str, Any]]:
     """Build the plugin skill projection and publish it with its tag atomically."""
     global _plugin_skill_commands, _plugin_skill_commands_tag
+    from agent.skill_utils import skill_frontmatter_flag
     from tools.skills_tool import (
         _parse_frontmatter, skill_matches_apps, skill_matches_environment,
         skill_matches_platform,
@@ -701,6 +733,8 @@ def _scan_plugin_skill_commands(manager, metadata: list, tag: tuple) -> dict[str
         # Offer from the file we will actually load, not registration-time hints.
         if not (skill_matches_platform(parsed) and skill_matches_environment(parsed) and skill_matches_apps(parsed)):
             continue
+        if not skill_frontmatter_flag(parsed, "user-invocable", default=True):
+            continue
         key = f"/{qualified.lower()}"
         if skill_command_collision_note(qualified) is not None or key in commands:
             logger.warning("Plugin skill %r collides with an existing slash command; skipping", qualified)
@@ -708,6 +742,10 @@ def _scan_plugin_skill_commands(manager, metadata: list, tag: tuple) -> dict[str
         commands[key] = {
             "name": qualified, "description": str(parsed.get("description") or entry.get("description")
                                                   or f"Invoke the {qualified} plugin skill").strip(),
+            "args_hint": str(parsed.get("argument-hint") or "").strip(),
+            "context": str(parsed.get("context") or "").strip().lower(),
+            "agent": str(parsed.get("agent") or "").strip(),
+            "background": skill_frontmatter_flag(parsed, "background", default=False),
             "skill_identifier": qualified, "skill_md_path": str(skill_md),
             "skill_dir": str(skill_md.parent), "source": "plugin",
         }
@@ -813,17 +851,78 @@ def resolve_slash_key(command: str, table: Mapping[str, Any]) -> Optional[str]:
     return cmd_key if cmd_key in table else None
 
 
+def _register_forked_skill(
+    loaded_skill: dict[str, Any], skill_dir: Path | None, skill_name: str,
+    cmd_key: str, user_instruction: str, task_id: str | None, runtime_note: str = "",
+) -> str:
+    """Register raw instructions and publish only an opaque direct-invocation marker."""
+    from agent.skill_fork import ForkedSkillRequest, register_forked_skill
+
+    agent_name = str(loaded_skill.get("agent") or "").strip()
+    background = bool(loaded_skill.get("background", False))
+    failure_reason = ""
+    if agent_name:
+        failure_reason = "named agent profiles are not supported yet"
+    elif background:
+        failure_reason = "background fork execution is not supported yet; forked skills run synchronously"
+
+    body = str(loaded_skill.get("fork_body") or "")
+    if not failure_reason and not body.strip():
+        failure_reason = "the skill has no executable instructions"
+    invocation = f"{cmd_key} {user_instruction.strip()}".strip()
+    return register_forked_skill(ForkedSkillRequest(
+        name=skill_name, invocation=invocation, goal="", context=user_instruction,
+        failure_reason=failure_reason, raw_body=body, skill_dir=str(skill_dir) if skill_dir else None,
+        declared_arguments=loaded_skill.get("arguments"), task_id=task_id, runtime_note=runtime_note,
+    ))
+
+
 def build_skill_invocation_message(
     cmd_key: str, user_instruction: str = "", task_id: str | None = None, runtime_note: str = "",
+    *, dispatch_fork: bool = False,
 ) -> Optional[str]:
     """Build the user message for a skill slash command, or None if not found."""
     skill_info = get_interactive_skill_commands().get(cmd_key)
-    loaded = _load_skill_payload(skill_info.get("skill_identifier") or skill_info["skill_dir"], task_id=task_id) if skill_info else None
+    loaded = _load_skill_payload(
+        skill_info.get("skill_identifier") or skill_info["skill_dir"],
+        task_id=task_id, allow_fork=dispatch_fork,
+    ) if skill_info else None
     if not loaded:
         return None
+    loaded_skill, skill_dir, skill_name = loaded
+    if str(loaded_skill.get("context") or "").strip().lower() == "fork":
+        if not dispatch_fork:
+            return None
+        return _register_forked_skill(
+            loaded_skill, skill_dir, skill_name, cmd_key, user_instruction, task_id, runtime_note,
+        )
     note = (f'[IMPORTANT: The user has invoked the "{loaded[2]}" skill, indicating they want '
             "you to follow its instructions. The full skill content is loaded below.]")
-    return _render_skill_block(loaded, note, task_id, user_instruction=user_instruction, runtime_note=runtime_note)
+    return _render_skill_block(
+        loaded, note, task_id, user_instruction=user_instruction, runtime_note=runtime_note,
+        substitute_arguments=True,
+    )
+
+
+def rebuild_forked_skill_marker(invocation: str, *, task_id: str | None = None) -> str | None:
+    """Re-resolve a body-free marker after a process handoff; never fall back to inline loading."""
+    command, _separator, user_instruction = invocation.partition(" ")
+    if not command.startswith("/"):
+        return None
+    commands = get_interactive_skill_commands()
+    cmd_key = resolve_slash_key(command[1:], commands)
+    if cmd_key is None:
+        return None
+    skill_info = commands.get(cmd_key)
+    if skill_info is None:
+        return None
+    loaded = _load_skill_payload(
+        skill_info.get("skill_identifier") or skill_info["skill_dir"],
+        task_id=task_id, allow_fork=True,
+    )
+    if not loaded or str(loaded[0].get("context") or "").strip().lower() != "fork":
+        return None
+    return _register_forked_skill(*loaded, cmd_key, user_instruction, task_id)
 
 
 # Stacked slash-skill invocations — `/skill-a /skill-b do XYZ` loads every
@@ -832,21 +931,30 @@ def build_skill_invocation_message(
 _MAX_STACKED_SKILLS = 5
 
 
-def split_stacked_skill_commands(rest: str, *, interactive: bool = False) -> tuple[list[str], str]:
+def split_stacked_skill_commands(
+    rest: str, *, interactive: bool = False, first_command: str | None = None,
+) -> tuple[list[str], str]:
     """Consume further leading ``/skill`` tokens from *rest* (text after the first
     matched command); stops at the first non-skill (or repeated) token, which
     starts the user instruction. Returns ``(extra_cmd_keys, remaining_instruction)``.
     Native callers (messaging gateway) must pass ``interactive=False``: plugin
-    skills are interactive-only and must not resolve here."""
+    skills are interactive-only and must not resolve here. A forked first skill
+    consumes the entire tail as its instruction, and a forked later token ends
+    expansion without being consumed."""
     keys: list[str] = []
     remaining = rest or ""
+    commands = get_interactive_skill_commands() if interactive else get_skill_commands()
+    if first_command and str((commands.get(first_command) or {}).get("context") or "").lower() == "fork":
+        return [], remaining.strip()
     while len(keys) < _MAX_STACKED_SKILLS - 1:
         stripped = remaining.lstrip()
         if not stripped.startswith("/"):
             break
         token, tail = (stripped.split(None, 1) + [""])[:2]
-        cmd_key = resolve_skill_command_key(token.lstrip("/"), interactive=interactive)
+        cmd_key = resolve_slash_key(token.lstrip("/"), commands)
         if cmd_key is None or cmd_key in keys:
+            break
+        if str((commands.get(cmd_key) or {}).get("context") or "").lower() == "fork":
             break
         keys.append(cmd_key)
         remaining = tail

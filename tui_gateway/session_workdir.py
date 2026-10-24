@@ -792,7 +792,9 @@ def _adopt_submit_user_row(session: dict, agent, persist_user_message: Any, text
     ``text`` is THIS turn's raw submit: a staged row from an earlier send (its turn ended before the agent
     ran) is discarded untouched, so the DB row stays the user's message and never a synthesized turn's text."""
     staged = session.pop("_submit_user_row", None)
-    if not isinstance(staged, dict) or agent is None or staged.get("content") != text:
+    from agent.skill_fork import normalize_forked_user_text
+    normalized_text = normalize_forked_user_text(text)
+    if not isinstance(staged, dict) or agent is None or staged.get("content") != normalized_text:
         return
     if staged["content"] != persist_user_message:
         from agent.session_persistence import _durable_content

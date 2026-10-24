@@ -269,7 +269,7 @@ def _collect_gateway_skill_entries(
     plugin_entries = _entries(_plugin_rows())
     reserved_names.update(n for n, *_rest in plugin_entries)
     skill_entries = _entries(
-        (cmd_key.lstrip("/"), info.get("description", ""), cmd_key)
+        (cmd_key.lstrip("/"), _skill_menu_description(info), cmd_key)
         for cmd_key, info, _rel in _iter_gateway_skills(platform))
 
     if max_slots is None:
@@ -277,6 +277,13 @@ def _collect_gateway_skill_entries(
     remaining = max(0, max_slots - len(plugin_entries))
     hidden_count = max(0, len(skill_entries) - remaining)
     return (plugin_entries + skill_entries[:remaining])[:max_slots], hidden_count
+
+
+def _skill_menu_description(info: dict) -> str:
+    """Put a skill's optional argument hint first so platform menu truncation preserves it."""
+    description = str(info.get("description") or "")
+    hint = str(info.get("args_hint") or "").strip()
+    return f"{hint} · {description}" if hint else description
 
 
 def telegram_menu_commands(max_commands: int = 100) -> tuple[list[tuple[str, str]], int]:
@@ -353,7 +360,7 @@ def discord_skill_commands_by_category(
                 hidden += 1
                 continue
             names_used[discord_name] = cmd_key
-            entry = (discord_name, _truncate_desc(info.get("description", ""), 100), cmd_key)
+            entry = (discord_name, _truncate_desc(_skill_menu_description(info), 100), cmd_key)
             if len(rel_parts) >= 2:
                 categories.setdefault(rel_parts[0], []).append(entry)
             else:

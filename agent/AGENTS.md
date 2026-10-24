@@ -61,6 +61,16 @@ Adding one: register in that table (no `if name == ...` chain); `tools/todo_tool
   commands (`agent/skill_commands.py`) inject as a user message; subdirectory `AGENTS.md` hints
   (`agent/subdirectory_hints.py`) append to the tool result (head+tail truncated past `_MAX_HINT_CHARS = 32_000`;
   the truncation is logged, never queued as a chat status warning — `context_file_max_chars` does not raise that cap).
+  Path-scoped skills follow the same cache-safe rule: after a matching `read_file`, their body is appended
+  to that tool result (`agent/skill_path_activation.py`).
+- **Forked skill bodies are not inserted into the parent user row or system prompt.** An explicit
+  `context: fork` slash invocation registers the raw body in a bounded process-local registry and
+  returns a body-free marker carrying only the invocation descriptor. If the marker crosses a
+  process boundary, the receiver re-resolves that explicit slash command under the session profile;
+  it never transports the body. `TurnFacade.run_conversation()` materializes the body there,
+  replaces the marker before persistence, and prepends one scripted synchronous `delegate_task`.
+  The dispatcher claims it once and sends the body only to the child. The child result may quote the
+  body and is returned normally to the parent; do not promise the transcript can never contain it.
 - **Strict role alternation.** Never two same-role messages in a row; never a synthetic user
   message injected mid-loop. The one exception is `/steer`, delivered as a standalone user row
   after a tool result (`assistant(tool_calls) → tool → user` is legal on every provider path) —

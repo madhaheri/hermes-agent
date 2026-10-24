@@ -269,6 +269,11 @@ class ComputeHost:
                 hermes_undo.on_user_message_appended(session["session_key"])
             with contextlib.suppress(Exception):
                 server._persist_branch_seed(session)
+            if isinstance(frame.get("submit_user_row"), dict):
+                # Forked prompts are staged on the parent before this isolated worker starts;
+                # carry that body-free invocation row so the child adopts it rather than writing
+                # a second user row after it redeems the marker.
+                session["_submit_user_row"] = dict(frame["submit_user_row"])
             server._run_prompt_submit(
                 request_id, sid, session, text, display_kind=frame.get("display_kind") or None,
                 display_metadata=(frame.get("display_metadata")

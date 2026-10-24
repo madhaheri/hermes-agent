@@ -388,6 +388,39 @@ def test_execute_tool_calls_sequential_flushes_each_tool_result_before_next_disp
     ]
 
 
+def test_read_file_tool_result_includes_matching_path_skill(tmp_path):
+    from tools.skills_tool import clear_skills_cache
+
+    agent = _make_agent()
+    agent.__dict__["valid_tool_names"] = {"read_file", "skill_view", "skills_list"}
+    agent.__dict__["_subdirectory_hints"].rebind_working_dir(str(tmp_path))
+    skill_dir = tmp_path / "skills" / "python-guide"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: python-guide\ndescription: Project Python rules\npaths: \"src/**/*.py\"\n---\n\n"
+        "Use the project's typing conventions.\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "src").mkdir()
+    messages: list = []
+    assistant_message = SimpleNamespace(
+        content="",
+        tool_calls=[_mock_tool_call(name="read_file", arguments='{"path":"src/main.py"}', call_id="read-1")],
+    )
+
+    with (
+        patch("model_tools.handle_function_call", return_value="source contents"),
+        patch("tools.skills_tool.SKILLS_DIR", tmp_path / "skills"),
+        patch("agent.tool_executor.maybe_persist_tool_result", side_effect=lambda **kwargs: kwargs["content"]),
+    ):
+        clear_skills_cache()
+        agent._execute_tool_calls_sequential(assistant_message, messages, "task-1")
+
+    assert len(messages) == 1
+    assert "source contents" in messages[0]["content"]
+    assert "Use the project's typing conventions." in messages[0]["content"]
+
+
 def test_sequential_keyboard_interrupt_emits_results_for_all_calls():
     """A KeyboardInterrupt mid-batch must not leave dangling tool_calls.
 

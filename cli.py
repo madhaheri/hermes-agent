@@ -1328,7 +1328,9 @@ class HermesCLI(CLIInitMixin, CLITuiRuntimeMixin, CLIProcessNotificationsMixin, 
 
         # Interactive surface: stacked tokens resolve against the interactive
         # map so plugin skills stack in the CLI like native skills.
-        extra_keys, user_instruction = split_stacked_skill_commands(rest, interactive=True)
+        extra_keys, user_instruction = split_stacked_skill_commands(
+            rest, interactive=True, first_command=base_cmd,
+        )
         if extra_keys:
             stacked_result = build_stacked_skill_invocation_message(
                 [base_cmd, *extra_keys], user_instruction, task_id=self.session_id,
@@ -1342,7 +1344,9 @@ class HermesCLI(CLIInitMixin, CLITuiRuntimeMixin, CLIProcessNotificationsMixin, 
                 missing,
             )
             return
-        msg = build_skill_invocation_message(base_cmd, rest, task_id=self.session_id)
+        msg = build_skill_invocation_message(
+            base_cmd, rest, task_id=self.session_id, dispatch_fork=True,
+        )
         if msg:
             self._queue_loaded_skills(msg, _t("cli.skills.loading_skill", name=skill_info['name']), None)
         else:

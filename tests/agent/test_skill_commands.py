@@ -39,6 +39,43 @@ description: Description for {name}.
 
 class TestScanSkillCommands:
 
+    def test_registers_argument_hint_from_frontmatter(self, tmp_path):
+        with patch("tools.skills_tool.SKILLS_DIR", tmp_path):
+            _make_skill(tmp_path, "fix-issue", frontmatter_extra="argument-hint: <issue-number> [branch]\n")
+            commands = scan_skill_commands()
+
+        assert commands["/fix-issue"]["args_hint"] == "<issue-number> [branch]"
+
+    def test_plugin_skill_command_exposes_argument_hint(self, tmp_path, monkeypatch):
+        from types import SimpleNamespace
+        from agent import skill_commands
+
+        skill_file = _make_skill(
+            tmp_path, "guide", frontmatter_extra="argument-hint: <topic>\n",
+        ) / "SKILL.md"
+        monkeypatch.setattr(skill_commands, "_plugin_skill_commands", {})
+        monkeypatch.setattr(skill_commands, "_plugin_skill_commands_tag", None)
+        commands = skill_commands._scan_plugin_skill_commands(
+            SimpleNamespace(find_plugin_skill=lambda _name: skill_file),
+            [{"name": "example:guide", "description": "Plugin guide"}],
+            ("profile",),
+        )
+
+        assert commands["/example:guide"]["args_hint"] == "<topic>"
+
+    def test_user_non_invocable_skill_is_not_registered_as_a_slash_command(self, tmp_path):
+        with patch("tools.skills_tool.SKILLS_DIR", tmp_path):
+            _make_skill(
+                tmp_path,
+                "background-reference",
+                frontmatter_extra="user-invocable: false\n",
+            )
+            _make_skill(tmp_path, "normal-skill")
+            commands = scan_skill_commands()
+
+        assert "/background-reference" not in commands
+        assert "/normal-skill" in commands
+
 
     def test_loads_skill_invocation_from_symlinked_skill_dir(self, tmp_path):
         """Slash commands should load skills symlinked under the local skills dir."""
@@ -619,6 +656,96 @@ class TestDuplicateNamesAgreeAcrossSurfaces:
 
 
 class TestBuildSkillInvocationMessage:
+
+    def test_context_fork_uses_an_opaque_marker_for_direct_slash_dispatch(self, tmp_path):
+        from agent.skill_fork import claim_forked_delegate, peek_forked_skill, prepare_forked_skill_turn
+        from agent.skill_commands import describe_skill_invocation
+
+        with patch("tools.skills_tool.SKILLS_DIR", tmp_path):
+            _make_skill(
+                tmp_path,
+                "deep-research",
+                frontmatter_extra="context: fork\narguments: [topic]\n",
+                body="Research $ARGUMENTS thoroughly and cite findings.",
+            )
+            scan_skill_commands()
+            marker = build_skill_invocation_message(
+                "/deep-research", "GPU inference", dispatch_fork=True,
+            )
+
+        assert marker is not None
+        assert marker.startswith("\x1eHERMES_SKILL_FORK_V1:")
+        assert "Research GPU inference" not in marker
+        assert describe_skill_invocation(marker, separator=" ") == "/deep-research GPU inference"
+        request = peek_forked_skill(marker)
+        assert request is not None
+        assert request.goal == ""
+        assert request.raw_body is not None
+        assert request.raw_body.strip() == "# deep-research\n\nResearch $ARGUMENTS thoroughly and cite findings."
+        assert request.context == "GPU inference"
+        _user, _persisted, _title, prelude = prepare_forked_skill_turn(marker, None, None, None)
+        assert prelude is not None
+        _content, _tool, arguments = next(prelude)
+        materialized = claim_forked_delegate(arguments["goal"])
+        assert materialized is not None
+        assert materialized.goal == "# deep-research\n\nResearch GPU inference thoroughly and cite findings."
+
+    def test_context_fork_is_not_loaded_as_inline_skill_content(self, tmp_path):
+        import json
+        from tools.skills_tool import clear_skills_cache, skill_view
+
+        with patch("tools.skills_tool.SKILLS_DIR", tmp_path):
+            _make_skill(
+                tmp_path,
+                "deep-research",
+                frontmatter_extra="context: fork\n",
+                body="Research private topic.",
+            )
+            clear_skills_cache()
+            result = json.loads(skill_view("deep-research", preprocess=False))
+
+        assert result["success"] is False
+        assert "slash command directly" in result["error"]
+
+    def test_stacked_split_stops_at_forked_skill_and_keeps_its_token_in_arguments(self, monkeypatch):
+        from agent import skill_commands
+
+        commands = {
+            "/ordinary": {"context": ""},
+            "/forked": {"context": "fork"},
+        }
+        monkeypatch.setattr(skill_commands, "get_interactive_skill_commands", lambda: commands)
+
+        assert skill_commands.split_stacked_skill_commands(
+            "/ordinary /forked topic", interactive=True, first_command="/ordinary",
+        ) == (["/ordinary"], "/forked topic")
+        assert skill_commands.split_stacked_skill_commands(
+            "/ordinary topic", interactive=True, first_command="/forked",
+        ) == ([], "/ordinary topic")
+
+    def test_substitutes_declared_and_positional_skill_arguments(self, tmp_path):
+        with patch("tools.skills_tool.SKILLS_DIR", tmp_path):
+            _make_skill(
+                tmp_path,
+                "deploy",
+                frontmatter_extra="arguments: [environment, region]\n",
+                body=("Deploy $environment to $region. Raw: $ARGUMENTS. "
+                      "Indexed: $0 / $ARGUMENTS[1] / $1. Literal: \\$1."),
+            )
+            scan_skill_commands()
+            with patch("agent.skill_commands.register_stable_prefix") as register_prefix:
+                message = build_skill_invocation_message(
+                    "/deploy", '"staging environment" us-east-1',
+                )
+
+        assert message is not None
+        assert "Deploy staging environment to us-east-1." in message
+        assert 'Raw: "staging environment" us-east-1.' in message
+        assert "Indexed: staging environment / us-east-1 / us-east-1." in message
+        assert "Literal: $1." in message
+        assert "following instruction alongside the skill invocation" in message
+        register_prefix.assert_called_once()
+        assert "staging environment" not in register_prefix.call_args.args[0]
 
 
     def test_uses_shared_skill_loader_for_secure_setup(self, tmp_path, monkeypatch):

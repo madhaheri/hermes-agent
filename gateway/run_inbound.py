@@ -1091,7 +1091,9 @@ class GatewayInboundMixin(GatewayInboundHooksMixin, GatewayInboundTranscriptionM
                     build_stacked_skill_invocation_message as _build_stacked,
                     split_stacked_skill_commands,
                 )
-                extra_keys, stacked_instruction = split_stacked_skill_commands(user_instruction)
+                extra_keys, stacked_instruction = split_stacked_skill_commands(
+                    user_instruction, first_command=cmd_key,
+                )
             except Exception:
                 _build_stacked = None
                 extra_keys, stacked_instruction = [], user_instruction
@@ -1119,7 +1121,9 @@ class GatewayInboundMixin(GatewayInboundHooksMixin, GatewayInboundTranscriptionM
                     return t("gateway.skills.stacked_load_failed", command=command)
                 event.text, _loaded, _missing = stacked_result
             else:
-                msg = build_skill_invocation_message(cmd_key, user_instruction, task_id=_quick_key)
+                msg = build_skill_invocation_message(
+                    cmd_key, user_instruction, task_id=_quick_key, dispatch_fork=True,
+                )
                 if msg:
                     event.text = msg
             # Fall through to normal message processing with skill content

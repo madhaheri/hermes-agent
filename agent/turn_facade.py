@@ -32,6 +32,12 @@ class TurnFacadeMixin:
         prelude: Optional[Generator]=None,
     ) -> dict[str, Any]:
         """Forwarder — see ``agent.conversation_loop.run_conversation``."""
+        from agent.skill_fork import prepare_forked_skill_turn
+
+        user_message, persist_user_message, title_user_message, prelude = prepare_forked_skill_turn(
+            user_message, persist_user_message, title_user_message, prelude,
+            task_id=getattr(self, "session_id", None),
+        )
         # A review shares this session_id for cache parity: fence review startup or interrupt
         # an admitted request and await its exit before opening live-turn instrumentation.
         # Foreground priority is retained if the review does not acknowledge within the bounded deadline

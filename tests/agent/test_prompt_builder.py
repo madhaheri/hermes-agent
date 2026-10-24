@@ -931,6 +931,18 @@ class TestSkillShouldShow:
             {"web_search"}, {"web"}
         ) is True
 
+    def test_disable_model_invocation_hides_skill_even_without_capability_snapshot(self):
+        from agent.skill_utils import extract_skill_conditions
+
+        conditions = extract_skill_conditions({"disable-model-invocation": True})
+        assert _skill_should_show(conditions, None, None) is False
+
+    def test_context_fork_skill_is_not_offered_for_inline_model_loading(self):
+        from agent.skill_utils import extract_skill_conditions
+
+        conditions = extract_skill_conditions({"context": "fork"})
+        assert _skill_should_show(conditions, None, None) is False
+
 
 
 
@@ -966,6 +978,17 @@ class TestBuildSkillsSystemPromptConditional:
             available_toolsets=set(),
         )
         assert "openhue" not in result
+
+    def test_disable_model_invocation_skill_is_not_advertised(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+        skill_dir = tmp_path / "skills" / "private-action"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text(
+            "---\nname: private-action\ndescription: An explicit-only workflow\n"
+            "disable-model-invocation: true\n---\n"
+        )
+        result = build_skills_system_prompt()
+        assert "private-action" not in result
 
 
 

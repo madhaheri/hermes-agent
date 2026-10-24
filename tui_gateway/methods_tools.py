@@ -631,7 +631,9 @@ def _dispatch_skill(rid, params, session, name, arg):
             # Stacked leading /skill tokens (up to 5, cli.py + gateway parity, #74705): the
             # first token matched above; consume any further leading skill tokens from `arg`,
             # then build one invocation that loads every skill over the remaining instruction.
-            extra_keys, user_instruction = sc.split_stacked_skill_commands(arg, interactive=True)
+            extra_keys, user_instruction = sc.split_stacked_skill_commands(
+                arg, interactive=True, first_command=key,
+            )
             if extra_keys:
                 stacked = sc.build_stacked_skill_invocation_message(
                     [key, *extra_keys], user_instruction,
@@ -646,7 +648,7 @@ def _dispatch_skill(rid, params, session, name, arg):
                         "notice": notice, "display": _skill_scaffold_projection(msg)})
             msg = sc.build_skill_invocation_message(
                 key, user_instruction,
-                task_id=session.get("session_key", "") if session else "")
+                task_id=session.get("session_key", "") if session else "", dispatch_fork=True)
             if msg:  # UIs render `display`, never `message`.
                 return _ok(rid, {
                     "type": "skill", "message": msg, "name": cmds[key].get("name", name),

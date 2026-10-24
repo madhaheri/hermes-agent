@@ -242,9 +242,11 @@ def _skill_directive(name, arg, route):
     key = resolve_slash_key(name, skills)
     if key is None:
         raise RuntimeStoreError('unsupported_command')
-    extra, instruction = split_stacked_skill_commands(arg, interactive=True)
+    extra, instruction = split_stacked_skill_commands(arg, interactive=True, first_command=key)
     stacked = build_stacked_skill_invocation_message([key, *extra], instruction, task_id=route) if extra else None
-    message = stacked[0] if stacked else build_skill_invocation_message(key, arg, task_id=route)
+    message = stacked[0] if stacked else build_skill_invocation_message(
+        key, arg, task_id=route, dispatch_fork=True,
+    )
     if not message:
         raise RuntimeStoreError('command_unavailable')
     missing = stacked[2] if stacked else []

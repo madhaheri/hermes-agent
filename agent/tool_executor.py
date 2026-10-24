@@ -1149,6 +1149,15 @@ def _commit_tool_result(
         else:
             persisted_result += subdir_hints
 
+    if not blocked and not is_error and function_name == "read_file":
+        try:
+            from agent.skill_path_activation import append_path_skill_context
+            persisted_result = append_path_skill_context(
+                agent, messages, function_name, function_args, persisted_result,
+            )
+        except Exception:
+            logger.debug("Path-scoped skill activation failed", exc_info=True)
+
     # Multimodal dicts become an OpenAI-style content list; text-only servers get a
     # string-safe fallback so a rejected image result never poisons history.
     _tool_content = agent._tool_result_content_for_active_model(function_name, persisted_result)

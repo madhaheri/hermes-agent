@@ -16,6 +16,10 @@ hooks (none shipped). The gateway reads user YAML **raw** (`run.py` + `config.py
 Slash commands: handlers are looked up by name through `_command_handler_table`; a command is
 listed in `_IDLE_COMMANDS` or `_PLAIN_COMMANDS` (works mid-run) in `run_busy.py`. No
 `if canonical == ...` chains. Registry + adding a command: `hermes_cli/AGENTS.md`.
+Canonical slash skill directives are resolved in `session_commands.py`; a `context: fork` directive
+uses a body-free marker carrying the invocation descriptor. The turn process re-resolves it under the
+session profile if needed, then `TurnFacade` materializes the child request without putting the body
+in the user row or system prompt.
 
 ## The gateway has TWO message guards — both must bypass approval/control commands
 

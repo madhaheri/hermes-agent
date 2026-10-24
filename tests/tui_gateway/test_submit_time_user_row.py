@@ -50,6 +50,42 @@ def test_user_message_is_durable_at_submit_before_any_agent_turn(monkeypatch, tm
         db.close()
 
 
+def test_fork_marker_submit_row_is_invocation_and_turn_adopts_it_once(monkeypatch, tmp_path):
+    from agent.skill_fork import ForkedSkillRequest, normalize_forked_user_text, register_forked_skill
+
+    invocation = "/fork-probe private topic"
+    marker = register_forked_skill(ForkedSkillRequest(
+        name="fork-probe", invocation=invocation, goal="", context="private topic",
+        raw_body="FORK_BODY_MUST_NOT_BE_STORED",
+    ))
+    db = SessionDB(db_path=tmp_path / "state.db")
+    sid, key = _desktop_session(monkeypatch, db)
+    session = server._sessions[sid]
+    try:
+        assert server._persist_session_row_for_submit("fork", session, marker, None) is None
+        assert [(row["role"], row["content"]) for row in db.get_messages_as_conversation(key)] == [
+            ("user", invocation),
+        ]
+
+        agent = _flush_agent(db, key)
+        persisted = normalize_forked_user_text(marker)
+        server._adopt_submit_user_row(session, agent, persisted, marker)
+        assert agent._pending_cli_user_message["content"] == invocation
+        user_message, _pending = _stage_turn_user_message(
+            agent, invocation, persisted, None, None, None, None,
+        )
+        agent._persist_user_message_idx = 0
+        agent._flush_messages_to_session_db([user_message], [])
+
+        assert [(row["role"], row["content"]) for row in db.get_messages_as_conversation(key)] == [
+            ("user", invocation),
+        ]
+        assert "FORK_BODY_MUST_NOT_BE_STORED" not in str(db.get_messages_as_conversation(key))
+    finally:
+        server._sessions.pop(sid, None)
+        db.close()
+
+
 def test_submit_ack_binds_the_written_row_even_if_worker_consumes_staging(monkeypatch, tmp_path):
     db = SessionDB(db_path=tmp_path / "state.db")
     sid, key = _desktop_session(monkeypatch, db)

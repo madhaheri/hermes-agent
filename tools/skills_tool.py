@@ -17,7 +17,8 @@ from hermes_constants import get_hermes_home
 from tools.registry import registry, tool_error
 from hermes_cli.config import cfg_get
 from agent.skill_utils import (
-    EXCLUDED_SKILL_DIRS as _EXCLUDED_SKILL_DIRS, is_skill_support_path as _is_skill_support_path)
+    EXCLUDED_SKILL_DIRS as _EXCLUDED_SKILL_DIRS, is_skill_support_path as _is_skill_support_path,
+    skill_frontmatter_flag)
 from tools.skills_tool_setup import (
     SkillReadinessStatus, _build_setup_note, _capture_required_environment_variables,
     _get_required_environment_variables, _is_env_var_persisted, _is_remote_env_backend)
@@ -258,6 +259,7 @@ def _skill_catalog(*, skip_disabled: bool = False, include_hidden: bool = False)
                 scanned.append({
                     "name": frontmatter.get("name", skill_md.parent.name)[:MAX_NAME_LENGTH],
                     "description": _truncate_description(description),
+                    "paths": frontmatter.get("paths"),
                     "category": _get_category_from_path(skill_md), "tier": tier, "root": scan_dir,
                     "path": skill_md, "visible": bool(skill_matches_platform(frontmatter)
                                                       and skill_matches_environment(frontmatter)
@@ -317,14 +319,14 @@ def skills_list(category: str | None = None, task_id: str | None = None) -> str:
         return tool_error(str(e), success=False)
 
 
-def _resolve_plugin_skill(name, file_path, task_id, preprocess):
+def _resolve_plugin_skill(name, file_path, task_id, preprocess, allow_fork):
     """``plugin:skill`` dispatch: ``(result_json, None)`` when answered, else ``(None,
     local_category_name)`` to fall through to the flat-tree scan — categorized local skills also use
     ``category:skill`` in config/gateway prompts, so the on-disk ``category/skill`` form returns."""
     from agent.skill_utils import is_valid_namespace, parse_qualified_name
     from hermes_cli.plugins import discover_plugins, get_plugin_manager
     namespace, bare = parse_qualified_name(name)
-    if not is_valid_namespace(namespace):
+    if namespace is None or not is_valid_namespace(namespace):
         return _fail(f"Invalid namespace '{namespace}' in '{name}'. Namespaces must match [a-zA-Z0-9_-]+."), None
     discover_plugins()  # idempotent
     pm = get_plugin_manager()
@@ -352,7 +354,8 @@ def _resolve_plugin_skill(name, file_path, task_id, preprocess):
             f"has been cleaned up — try again after the plugin is reloaded."), None
     if plugin_skill_md is not None:
         return _serve_plugin_skill(
-            plugin_skill_md, namespace, bare, file_path=file_path, preprocess=preprocess, session_id=task_id), None
+            plugin_skill_md, namespace, bare, file_path=file_path, preprocess=preprocess,
+            session_id=task_id, allow_fork=allow_fork), None
     if available := pm.list_plugin_skills(namespace):  # plugin exists but this specific skill is missing
         return _fail(
             f"Skill '{bare}' not found in plugin '{namespace}'.",
@@ -589,8 +592,54 @@ def _log_security_warnings(name: str, skill_md: Path, content: str, all_dirs, ac
         logger.warning("Skill security warning for '%s': %s", name, "; ".join(warnings))
 
 
+def _skill_context_metadata(frontmatter: dict, content: str, allow_fork: bool) -> dict:
+    """Expose fork metadata to the internal slash loader without exposing its body to model tools."""
+    metadata = {
+        "context": frontmatter.get("context"), "agent": frontmatter.get("agent"),
+        "background": skill_frontmatter_flag(frontmatter, "background", default=False),
+    }
+    if allow_fork and str(frontmatter.get("context") or "").strip().lower() == "fork":
+        _parsed_frontmatter, metadata["fork_body"] = _parse_frontmatter(content)
+    return metadata
+
+
+def _fork_skill_inline_error(frontmatter: dict, skill_name: str, allow_fork: bool) -> str | None:
+    """Reject a fork skill body unless the internal slash-command loader requested it."""
+    is_forked = str(frontmatter.get("context") or "").strip().lower() == "fork"
+    return (
+        f"Skill '{skill_name}' runs in an isolated child. Invoke its slash command directly instead."
+        if is_forked and not allow_fork else None
+    )
+
+
+def _skill_availability_error(frontmatter: dict, skill_name: str, allow_fork: bool) -> str | None:
+    """Return the first platform or fork-mode refusal before rendering or installing dependencies."""
+    if not skill_matches_platform(frontmatter):
+        return _fail(
+            f"Skill '{skill_name}' is not supported on this platform.",
+            readiness_status=SkillReadinessStatus.UNSUPPORTED.value,
+        )
+    if fork_error := _fork_skill_inline_error(frontmatter, skill_name, allow_fork):
+        return _fail(
+            fork_error, hint="Forked skills are hidden from inline loading; use the slash command.",
+        )
+    return None
+
+
+def _is_disabled_skill_copy(skill_name: str, relative_path: str, skill_md: Path | None) -> bool:
+    """A same-tier duplicate is blocked only when its exact copy is disabled too."""
+    if skill_md is None or not _is_skill_disabled(skill_name, relative_path):
+        return False
+    return _is_skill_disabled(skill_name) or any(
+        entry["path"] == skill_md and entry["load_name"] == relative_path
+        for entry in _skill_catalog(skip_disabled=True, include_hidden=True)
+    )
+
+
 def skill_view(
-    name: str, file_path: str | None = None, task_id: str | None = None, preprocess: bool = True) -> str:
+    name: str, file_path: str | None = None, task_id: str | None = None, preprocess: bool = True,
+    *, allow_fork: bool = False,
+) -> str:
     """View a skill (SKILL.md) or a file within its directory, as JSON. ``name`` is a skill name
     or path ("axolotl", "03-fine-tuning/axolotl"); "plugin:skill" resolves plugin-provided
     skills. ``preprocess`` applies the configured SKILL.md template / inline shell rendering;
@@ -602,7 +651,9 @@ def skill_view(
             return _fail(lookup_error, hint=_LOOKUP_HINT)
         local_category_name: str | None = None
         if ":" in name:  # plugin registry; bare names use the flat-tree scan below
-            served, local_category_name = _resolve_plugin_skill(name, file_path, task_id, preprocess)
+            served, local_category_name = _resolve_plugin_skill(
+                name, file_path, task_id, preprocess, allow_fork,
+            )
             if served is not None:
                 return served
         # The fall-through form (namespace/bare) joins onto each search dir too; re-validate it
@@ -620,19 +671,19 @@ def skill_view(
             return _fail(f"Failed to read skill '{name}': {e}")
         _log_security_warnings(name, skill_md, content, all_dirs, active_skills_dir)
         frontmatter = _safe_frontmatter(content=content)
-        if not skill_matches_platform(frontmatter):
-            return _fail(f"Skill '{name}' is not supported on this platform.", readiness_status=SkillReadinessStatus.UNSUPPORTED.value)
         resolved_name = frontmatter.get("name", skill_md.parent.name)
+        if availability_error := _skill_availability_error(frontmatter, resolved_name, allow_fork):
+            return availability_error
         # Disabled by declared name, or by the exact path that IS this copy's load name (a same-tier
         # duplicate's row) — whatever alias reached it; an unrelated copy at that path elsewhere is not.
         rel = _owned_relative(skill_dir, skill_md, all_dirs)
-        if _is_skill_disabled(resolved_name, rel) and (_is_skill_disabled(resolved_name) or any(
-                e["path"] == skill_md and e["load_name"] == rel for e in _skill_catalog(skip_disabled=True, include_hidden=True))):
+        if _is_disabled_skill_copy(resolved_name, rel, skill_md):
             return _fail(f"Skill '{resolved_name}' is disabled. Enable it with `hermes skills` or inspect the files directly on disk.")
         if file_path and skill_dir:
             return _serve_skill_file(
                 skill_dir, file_path, name, list_available=True, mark_read=True,
                 hint="Use a relative path within the skill directory")
+
         # tags/related_skills: metadata.hermes.* (agentskills.io) first, then top-level.
         metadata = frontmatter.get("metadata")
         hermes_meta = (metadata.get("hermes", {}) or {}) if isinstance(metadata, dict) else {}
@@ -674,8 +725,11 @@ def skill_view(
                     + "` and reload."
                 )
 
+        fork_metadata = _skill_context_metadata(frontmatter, content, allow_fork)
         result = {
             "success": True, "name": skill_name, "description": frontmatter.get("description", ""),
+            "arguments": frontmatter.get("arguments"),
+            **fork_metadata,
             "tags": tags, "related_skills": related_skills, "content": rendered_content,
             "path": rel_path, "skill_dir": str(skill_dir) if skill_dir else None,
             "linked_files": linked_files if linked_files else None,

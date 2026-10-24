@@ -733,10 +733,31 @@ def _hermes_metadata(frontmatter: dict[str, Any]) -> dict[str, Any]:
 _CONDITION_KEYS = ("fallback_for_toolsets", "requires_toolsets", "fallback_for_tools", "requires_tools", "session_platforms")
 
 
-def extract_skill_conditions(frontmatter: dict[str, Any]) -> dict[str, list]:
+def skill_frontmatter_flag(frontmatter: dict[str, Any], key: str, *, default: bool) -> bool:
+    """Read a boolean skill frontmatter flag, accepting YAML and string booleans."""
+    value = frontmatter.get(key)
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int) and value in (0, 1):
+        return bool(value)
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"true", "yes", "on", "1"}:
+            return True
+        if normalized in {"false", "no", "off", "0"}:
+            return False
+    return default
+
+
+def extract_skill_conditions(frontmatter: dict[str, Any]) -> dict[str, Any]:
     """Extract conditional activation fields from parsed frontmatter (absent = ``[]``)."""
     hermes = _hermes_metadata(frontmatter)
-    return {key: hermes.get(key, []) for key in _CONDITION_KEYS}
+    conditions = {key: hermes.get(key, []) for key in _CONDITION_KEYS}
+    conditions["disable_model_invocation"] = skill_frontmatter_flag(
+        frontmatter, "disable-model-invocation", default=False,
+    )
+    conditions["context_fork"] = str(frontmatter.get("context") or "").strip().lower() == "fork"
+    return conditions
 
 
 def extract_skill_config_vars(frontmatter: dict[str, Any]) -> list[dict[str, Any]]:

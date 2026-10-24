@@ -6,6 +6,7 @@ import logging
 import re
 import subprocess
 from pathlib import Path
+from typing import Any
 
 from agent.compression_marker import elide
 from hermes_cli._subprocess_compat import IS_WINDOWS, windows_hide_flags
@@ -17,6 +18,12 @@ logger = logging.getLogger(__name__)
 _SKILL_TEMPLATE_RE = re.compile(r"\$\{(HERMES_SKILL_DIR|HERMES_SESSION_ID)\}")
 # Inline shell snippets like !`date +%Y-%m-%d` — single-line only.
 _INLINE_SHELL_RE = re.compile(r"!`([^`\n]+)`")
+_SKILL_ARGUMENT_RE = re.compile(
+    r"(?<!\\)((?:\\\\)*)\$(ARGUMENTS(?:\[(\d+)\])?|\d+|[A-Za-z_][A-Za-z0-9_]*)"
+)
+_ESCAPED_SKILL_ARGUMENT_RE = re.compile(
+    r"(?<!\\)\\(\$(?:ARGUMENTS(?:\[\d+\])?|\d+|[A-Za-z_][A-Za-z0-9_]*))"
+)
 # Cap inline-shell output so a runaway command can't blow out the context.
 _INLINE_SHELL_MAX_OUTPUT = 4000
 
@@ -42,6 +49,103 @@ def substitute_template_vars(content: str, skill_dir: Path | None, session_id: s
         "HERMES_SESSION_ID": str(session_id) if session_id else None,
     }
     return _SKILL_TEMPLATE_RE.sub(lambda m: values[m.group(1)] or m.group(0), content)
+
+
+def _split_skill_arguments(raw_arguments: str) -> list[str]:
+    """Split slash-command arguments on whitespace while preserving quoted groups and Windows paths."""
+    arguments: list[str] = []
+    current: list[str] = []
+    quote: str | None = None
+    started = False
+    index = 0
+    while index < len(raw_arguments):
+        char = raw_arguments[index]
+        if quote:
+            if char == quote:
+                quote = None
+            elif char == "\\" and index + 1 < len(raw_arguments) and raw_arguments[index + 1] in {quote, "\\"}:
+                current.append(raw_arguments[index + 1])
+                index += 1
+            else:
+                current.append(char)
+        elif char in {"'", '"'}:
+            quote = char
+            started = True
+        elif char.isspace():
+            if started:
+                arguments.append("".join(current))
+                current = []
+                started = False
+        elif char == "\\" and index + 1 < len(raw_arguments) and (
+            raw_arguments[index + 1].isspace() or raw_arguments[index + 1] in {"'", '"', "\\"}
+        ):
+            current.append(raw_arguments[index + 1])
+            index += 1
+            started = True
+        else:
+            current.append(char)
+            started = True
+        index += 1
+    if started:
+        arguments.append("".join(current))
+    return arguments
+
+
+def substitute_skill_arguments(
+    content: str, raw_arguments: str, declared_arguments: Any = None,
+) -> tuple[str, int | None, bool]:
+    """Substitute Claude-compatible slash arguments after preprocessing, so argument text cannot execute shell snippets."""
+    tokens = _split_skill_arguments(raw_arguments or "")
+    names = (
+        declared_arguments if isinstance(declared_arguments, list)
+        else str(declared_arguments or "").split()
+    )
+    name_to_index = {
+        str(name).strip(): index for index, name in enumerate(names) if str(name).strip()
+    }
+    first_dynamic_index: int | None = None
+    consumed_argument = False
+
+    def replace(match: re.Match) -> str:
+        nonlocal first_dynamic_index, consumed_argument
+        prefix = match.group(1)
+        token = match.group(2)
+        if token == "ARGUMENTS":
+            value = raw_arguments or ""
+            received = bool(value)
+        elif token.startswith("ARGUMENTS["):
+            index = int(match.group(3))
+            received = index < len(tokens)
+            value = tokens[index] if received else match.group(0)[len(prefix):]
+        elif token.isdigit():
+            index = int(token)
+            received = index < len(tokens)
+            value = tokens[index] if received else match.group(0)[len(prefix):]
+        elif token in name_to_index:
+            index = name_to_index[token]
+            received = True
+            value = tokens[index] if index < len(tokens) else ""
+        else:
+            return match.group(0)
+        if received:
+            consumed_argument = True
+            if first_dynamic_index is None:
+                first_dynamic_index = match.start()
+        return prefix + value
+
+    def unescape(match: re.Match) -> str:
+        token = match.group(1)[1:]
+        if token == "ARGUMENTS" or token.isdigit() or token in name_to_index:
+            return match.group(1)
+        return match.group(0)
+
+    expanded = _SKILL_ARGUMENT_RE.sub(replace, content)
+    expanded = _ESCAPED_SKILL_ARGUMENT_RE.sub(unescape, expanded)
+    if first_dynamic_index is None:
+        return expanded, None, consumed_argument
+    prefix = _SKILL_ARGUMENT_RE.sub(replace, content[:first_dynamic_index])
+    prefix = _ESCAPED_SKILL_ARGUMENT_RE.sub(unescape, prefix)
+    return expanded, len(prefix), consumed_argument
 
 
 def run_inline_shell(command: str, cwd: Path | None, timeout: int) -> str:

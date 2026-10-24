@@ -51,11 +51,17 @@ def _compute_host_turn_frame(
     rid: str, sid: str, session: dict, text: Any, image_paths: list[str] | None = None,
     queued_prompt_generation: int | None = None, display_kind: str | None = None,
     display_metadata: dict | None = None) -> dict:
+    submit_user_row = None
     with session["history_lock"]:
         history = list(session.get("history", []))
         history_version = int(session.get("history_version", 0))
         attached_images = list(image_paths if image_paths is not None else session.get("attached_images", []))
-    return {
+        if isinstance(text, str):
+            from agent.skill_fork import normalize_forked_user_text
+            if normalize_forked_user_text(text) != text:
+                staged = session.get("_submit_user_row")
+                submit_user_row = dict(staged) if isinstance(staged, dict) else None
+    frame = {
         "type": "turn.start", "sid": sid, "request_id": rid,
         "session_key": session.get("session_key") or sid, "text": text,
         **({"display_kind": display_kind} if display_kind else {}), "history": history,
@@ -84,6 +90,9 @@ def _compute_host_turn_frame(
         # our own entry ("Session ... already has a live owner"). No lease held = no vouch, and
         # the child keeps its legacy self-claim path (fail-closed refusal on conflict).
         "active_session_lease": _active_session_lease_vouch(session)}
+    if submit_user_row is not None:
+        frame["submit_user_row"] = submit_user_row
+    return frame
 
 
 def _active_session_lease_vouch(session: dict) -> dict | None:
@@ -266,6 +275,13 @@ def _apply_compute_host_metadata_mirror(session: dict, frame: dict | None) -> No
 def _on_compute_host_turn_done(rid: str, sid: str, session: dict, frame: dict) -> None:
     with session["history_lock"]:
         _compute_host_adopt_frame_meta(session, frame)
+        submitted_row = frame.get("submit_user_row")
+        staged_row = session.get("_submit_user_row")
+        if (
+            isinstance(submitted_row, dict) and isinstance(staged_row, dict)
+            and submitted_row.get("_row_id") == staged_row.get("_row_id")
+        ):
+            session.pop("_submit_user_row", None)
         session["running"] = False
         session["last_active"] = time.time()
         _clear_inflight_turn(session)

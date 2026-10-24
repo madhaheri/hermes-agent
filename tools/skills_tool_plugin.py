@@ -122,7 +122,7 @@ def _preprocess_skill(content: str, skill_dir, session_id, debug_msg: str, *args
 
 def _serve_plugin_skill(
     skill_md: Path, namespace: str, bare: str, file_path: str | None = None, *,
-    preprocess: bool = True, session_id: str | None = None) -> str:
+    preprocess: bool = True, session_id: str | None = None, allow_fork: bool = False) -> str:
     """Read a plugin-provided skill, apply guards, return JSON."""
     from hermes_cli.plugins import _get_disabled_plugins, get_plugin_manager
     from tools import skills_tool as _st
@@ -134,6 +134,8 @@ def _serve_plugin_skill(
     except Exception as e:
         return _fail(f"Failed to read skill '{qualified_name}': {e}")
     parsed_frontmatter = _safe_frontmatter(content=content)
+    _parsed_frontmatter, skill_body = _st._parse_frontmatter(content)
+    is_forked_skill = str(parsed_frontmatter.get("context") or "").strip().lower() == "fork"
     if _st._is_skill_disabled(qualified_name):
         return _fail(f"Skill '{qualified_name}' is disabled.")
     if not _st.skill_matches_platform(parsed_frontmatter):
@@ -141,6 +143,10 @@ def _serve_plugin_skill(
                      readiness_status=SkillReadinessStatus.UNSUPPORTED.value)
     if file_path:
         return _serve_skill_file(skill_md.parent, file_path, qualified_name, read_error_prefix=True)
+    if is_forked_skill and not allow_fork:
+        return _fail(
+            f"Skill '{qualified_name}' runs in an isolated child. Invoke its slash command directly instead.",
+            hint="Forked skills are hidden from inline loading; use the slash command.")
     if any(p in content.lower() for p in _INJECTION_PATTERNS):
         logger.warning(
             "Plugin skill '%s:%s' contains patterns that may indicate prompt injection", namespace, bare)
@@ -156,6 +162,10 @@ def _serve_plugin_skill(
     return _json({
         "success": True, "name": qualified_name, "content": banner + rendered_content,
         "description": _truncate_description(str(parsed_frontmatter.get("description", ""))),
+        "arguments": parsed_frontmatter.get("arguments"),
+        "context": parsed_frontmatter.get("context"), "agent": parsed_frontmatter.get("agent"),
+        "background": _st.skill_frontmatter_flag(parsed_frontmatter, "background", default=False),
+        **({"fork_body": skill_body} if allow_fork and is_forked_skill else {}),
         "linked_files": _plugin_skill_linked_files(skill_md.parent),
         "readiness_status": SkillReadinessStatus.AVAILABLE.value,
         "skill_dir": str(skill_md.parent)})

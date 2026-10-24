@@ -19,7 +19,14 @@ Reviewing a skill PR: check the target directory — heavy-dep or niche skills g
 `[linux, macos]`, ...), `metadata.hermes.tags`, `metadata.hermes.category`,
 `metadata.hermes.related_skills`, `metadata.hermes.config` (config.yaml settings the skill needs —
 stored under `skills.config.<key>`, prompted during setup, injected at load). Top-level `tags:` /
-`category:` are accepted and mirrored from `metadata.hermes.*` by the loader.
+`category:` are accepted and mirrored from `metadata.hermes.*` by the loader. Claude-compatible
+`disable-model-invocation: true` omits a skill from model discovery/retrieval while preserving
+explicit user loading; `user-invocable: false` hides it from slash-command discovery; top-level
+`paths:` activates the skill after `read_file` reads a matching session-workspace path. Direct
+single-skill slash invocations support `$ARGUMENTS`, zero-based `$ARGUMENTS[N]` / `$N`, and named
+placeholders declared by `arguments: [name, ...]`; `argument-hint` appears in slash completion and
+is display-only. Argument interpolation runs after preprocessing.
+`context: fork` hides a skill from model discovery and runs explicit slash invocations through one synchronous default delegated child; the body is not inserted into the parent's user message or system prompt, though the child result may quote it. Named `agent:` routing and `background: true` remain unsupported and fail closed.
 
 ## Authoring standards (HARDLINE — enforced by `tests/skills/test_authoring_standards.py`)
 
